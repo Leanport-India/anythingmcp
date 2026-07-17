@@ -213,6 +213,33 @@ describe('OAuth2TokenService', () => {
       expect(postedBody).toContain('client_secret=client-secret');
     });
 
+    it('should refresh with HTTP Basic auth when tokenAuthMethod is client_secret_basic', async () => {
+      mockedAxios.post.mockResolvedValue({
+        data: {
+          access_token: 'datev-at',
+          expires_in: 3600,
+        },
+      });
+
+      const result = await service.refreshToken({
+        tokenUrl: 'https://sandbox-api.datev.de/token',
+        refreshToken: 'rt-abc',
+        clientId: 'datev-client',
+        clientSecret: 'secret:with space',
+        tokenAuthMethod: 'client_secret_basic',
+      });
+
+      expect(result).toBe('datev-at');
+      const [_url, body, opts] = mockedAxios.post.mock.calls[0] as any;
+      expect(body).toContain('grant_type=refresh_token');
+      expect(body).toContain('refresh_token=rt-abc');
+      expect(body).not.toContain('client_id=');
+      expect(body).not.toContain('client_secret=');
+      expect(opts.headers.Authorization).toBe(
+        `Basic ${Buffer.from('datev-client:secret%3Awith%20space').toString('base64')}`,
+      );
+    });
+
     it('should return null when tokenUrl is missing', async () => {
       const result = await service.refreshToken({
         refreshToken: 'rt-abc',

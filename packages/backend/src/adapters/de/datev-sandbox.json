@@ -1,8 +1,8 @@
 {
   "slug": "datev-sandbox",
-  "name": "DATEV Online APIs (Sandbox)",
-  "description": "Sandbox environment for the DATEV Online APIs — read accounting Mandanten (clients), document types and DUO version metadata against DATEV's test data. Use this while you build and test; every new DATEV app must run in sandbox until DATEV grants production approval. Same OAuth2 Authorization Code + PKCE flow as production, pointed at DATEV's sandbox endpoints.",
-  "instructions": "**Use this connector for testing.** Every DATEV app runs in the sandbox until DATEV completes its production-approval review — so this is where you start.\n\n**Setup**:\n1. Create a **Confidential** app on the DATEV-Entwicklerportal (https://developer.datev.de) with **OpenID Connect Authorization Code Flow**. Set the redirect URI to `<your-server>/api/mcp-oauth/callback`.\n2. Subscribe the app to the sandbox API products: **accounting:clients 2.0** and **accounting:documents 2.0**.\n3. Set `DATEV_CLIENT_ID` and `DATEV_CLIENT_SECRET` (from the portal — copy the secret in full, it is shown only once).\n4. Import this adapter — it is pre-configured for the sandbox (authorize `login.datev.de/openidsandbox/authorize`, token `sandbox-api.datev.de/token`, API base `platform-sandbox/v2`) and authenticates at the token endpoint via **HTTP Basic** (`client_secret_basic`), which DATEV requires.\n5. Run the one-time OAuth flow: `POST /api/connectors/{id}/oauth/authorize` -> open the returned URL -> log in with your DATEV-Konto -> the platform stores an encrypted refresh token automatically.\n6. Every call then sends `Authorization: Bearer <token>` AND the mandatory `X-DATEV-Client-Id: <DATEV_CLIENT_ID>` header automatically.\n\n**Going to production**: once DATEV approves your app for production, use the separate **DATEV Online APIs** connector (same credentials, production endpoints).\n\n**Scopes requested**: `datev:accounting:clients accounting:clients:read accounting:documents`. Do NOT add `openid` — it is the issuer name, not a requested scope.\n\n**Mandant scoping**: every per-client tool takes a `clientId` parameter — the **Mandant UUID** (RFC4122), returned by `datev_list_clients`. Distinct from `DATEV_CLIENT_ID` (the OAuth app identifier, sent in the header).",
+  "name": "DATEV Online APIs Sandbox",
+  "description": "Sandbox DATEV connector covering accounting documents/clients plus additional ACS, TAX, and Payroll Data Services endpoints from DATEV Postman collections.",
+  "instructions": "**Important — this connector is NOT plug-and-play.** DATEV's Online APIs require:\n\n1. A registered sandbox app on the DATEV-Entwicklerportal (https://developer.datev.de) → **Confidential client** + **OpenID Connect Authorization Code Flow**. Set the redirect URI to `<your-server>/api/mcp-oauth/callback`.\n2. A subscription to each sandbox API product you want to use, including the accounting, ACS, TAX, and Payroll Data Services products you plan to call.\n3. A DATEV-Konto user with SmartLogin or SmartCard/mIDentity. DATEV does NOT expose `client_credentials` — every call is on-behalf-of a human accountant. Confidential clients get 2-year rolling refresh tokens (the engine refreshes proactively).\n\n**Sandbox defaults**: this adapter is pinned to `https://login.datev.de/openidsandbox/authorize`, `https://sandbox-api.datev.de/token`, and `platform-sandbox` API paths. Use this adapter for sandbox apps so catalog imports do not reset the connector back to production.\n\n**Setup**:\n1. Set `DATEV_CLIENT_ID` and `DATEV_CLIENT_SECRET` (from the DATEV portal sandbox app).\n2. Import this adapter.\n3. Run the one-time OAuth flow: `POST /api/connectors/{id}/oauth/authorize` → open the returned URL → log in with your DATEV-Konto → the platform stores an encrypted refresh token automatically.\n4. From now on every call sends `Authorization: Bearer <token>` AND the mandatory `X-DATEV-Client-Id: <DATEV_CLIENT_ID>` header automatically.\n\n**Scopes requested**: this sandbox adapter requests the combined DATEV scopes needed by the accounting, ACS, TAX, and Payroll Data Services Postman collections. Your DATEV sandbox app still needs the corresponding product subscriptions/permissions.\n\n**Mandant scoping**: most per-client tools take a `clientId` parameter — that's the **Mandant UUID** (RFC4122 8-4-4-4-12), returned by the relevant product's client-list tool. **Distinct** from `DATEV_CLIENT_ID` (the OAuth app identifier, sent in the header).\n\n**Not exposed here** (engine limitation):\n- Multipart/file upload endpoints are excluded where they require binary file parts, because the REST engine does not yet support safe binary upload values.\n- The `datev_idp_next` security option (next-gen `signin.datev.de/datevam/...` IdP) is defined in the specs but not yet exposed here.",
   "region": "de",
   "category": "accounting",
   "icon": "datev",
@@ -12,7 +12,7 @@
     "DATEV_CLIENT_SECRET"
   ],
   "connector": {
-    "name": "DATEV Online APIs (Sandbox)",
+    "name": "DATEV Online APIs Sandbox",
     "type": "REST",
     "baseUrl": "https://accounting-clients.api.datev.de/platform-sandbox/v2",
     "authType": "OAUTH2",
@@ -21,8 +21,8 @@
       "clientSecret": "{{DATEV_CLIENT_SECRET}}",
       "authorizationUrl": "https://login.datev.de/openidsandbox/authorize",
       "tokenUrl": "https://sandbox-api.datev.de/token",
-      "tokenAuthMethod": "basic",
-      "scopes": "datev:accounting:clients accounting:clients:read accounting:documents"
+      "tokenAuthMethod": "client_secret_basic",
+      "scopes": "openid profile email offline_access datev:accounting:clients accounting:clients:read accounting:documents accounting:dataexchange accounting:dxso-jobs datev:accounting:extf-files-import datev:my-tax:documents datev:tax:taxdeclaration datev:hr:payrolldataupload datev:hr:payrolldatareport datev:hr:payrolldataexport datev:hr:eau datev:hr:payrolldataexchange datev:hr:documents:upload"
     },
     "headers": {
       "X-DATEV-Client-Id": "{{DATEV_CLIENT_ID}}"
@@ -30,7 +30,7 @@
   },
   "tools": [
     {
-      "name": "datev_list_clients",
+      "name": "datev_sandbox_list_clients",
       "description": "List DATEV accounting Mandanten (clients) your DATEV-Konto user is provisioned for, from the accounting-clients v2 master-data product. Returns each client's UUID, consultant number, client number and display name. Use the returned UUID as the `clientId` parameter on all other tools.",
       "parameters": {
         "type": "object",
@@ -58,14 +58,14 @@
       }
     },
     {
-      "name": "datev_get_client",
+      "name": "datev_sandbox_get_client",
       "description": "Get one Mandant's master data (consultant/client number, name, address) from accounting-clients v2.",
       "parameters": {
         "type": "object",
         "properties": {
           "clientId": {
             "type": "string",
-            "description": "Mandant UUID (RFC4122 8-4-4-4-12). Get this from datev_list_clients."
+            "description": "Mandant UUID (RFC4122 8-4-4-4-12). Get this from datev_sandbox_list_clients."
           }
         },
         "required": [
@@ -81,8 +81,8 @@
       }
     },
     {
-      "name": "datev_documents_list_clients",
-      "description": "List the subset of Mandanten that have DATEV Unternehmen online (DUO) document access via the accounting-documents v2 product. This may be smaller than datev_list_clients — only clients with active DUO subscriptions appear here.",
+      "name": "datev_sandbox_documents_list_clients",
+      "description": "List the subset of Mandanten that have DATEV Unternehmen online (DUO) document access via the accounting-documents v2 product. This may be smaller than datev_sandbox_list_clients — only clients with active DUO subscriptions appear here.",
       "parameters": {
         "type": "object",
         "properties": {}
@@ -96,14 +96,14 @@
       }
     },
     {
-      "name": "datev_get_documents_client",
+      "name": "datev_sandbox_get_documents_client",
       "description": "Get one Mandant's basic data as exposed by the accounting-documents v2 product (the DUO view, distinct from the accounting-clients master record).",
       "parameters": {
         "type": "object",
         "properties": {
           "clientId": {
             "type": "string",
-            "description": "Mandant UUID (from datev_list_clients or datev_documents_list_clients)."
+            "description": "Mandant UUID (from datev_sandbox_list_clients or datev_sandbox_documents_list_clients)."
           }
         },
         "required": [
@@ -119,14 +119,14 @@
       }
     },
     {
-      "name": "datev_list_document_types",
+      "name": "datev_sandbox_list_document_types",
       "description": "List the document types (Belegtypen) configured for a Mandant on DATEV Unternehmen online — needed before uploading documents so you know which `documentType` values are accepted.",
       "parameters": {
         "type": "object",
         "properties": {
           "clientId": {
             "type": "string",
-            "description": "Mandant UUID (from datev_list_clients)."
+            "description": "Mandant UUID (from datev_sandbox_list_clients)."
           }
         },
         "required": [
@@ -142,14 +142,14 @@
       }
     },
     {
-      "name": "datev_get_duo_version",
+      "name": "datev_sandbox_get_duo_version",
       "description": "Get the DATEV Unternehmen online (DUO) version and the permitted file extensions for document upload on a given Mandant. Useful before generating uploads to know what file formats DUO will accept (PDF, JPG, TIFF, etc.) and any DUO-version-specific limits.",
       "parameters": {
         "type": "object",
         "properties": {
           "clientId": {
             "type": "string",
-            "description": "Mandant UUID (from datev_list_clients)."
+            "description": "Mandant UUID (from datev_sandbox_list_clients)."
           }
         },
         "required": [
@@ -159,6 +159,2290 @@
       "endpointMapping": {
         "method": "GET",
         "path": "https://accounting-documents.api.datev.de/platform-sandbox/v2/clients/{clientId}/duo-version",
+        "headers": {
+          "Accept": "application/json"
+        }
+      }
+    },
+    {
+      "name": "datev_sandbox_extf_list_jobs",
+      "description": "List EXTF import jobs for a DATEV accounting client.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "description": "DATEV Mandant/client UUID."
+          }
+        },
+        "required": [
+          "clientId"
+        ]
+      },
+      "endpointMapping": {
+        "method": "GET",
+        "path": "https://accounting-extf-files.api.datev.de/platform-sandbox/v3/clients/{clientId}/extf-files/jobs",
+        "headers": {
+          "Accept": "application/json"
+        }
+      }
+    },
+    {
+      "name": "datev_sandbox_extf_get_job",
+      "description": "Get one EXTF import job status for a DATEV accounting client.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "description": "DATEV Mandant/client UUID."
+          },
+          "jobId": {
+            "type": "string",
+            "description": "EXTF import job ID."
+          }
+        },
+        "required": [
+          "clientId",
+          "jobId"
+        ]
+      },
+      "endpointMapping": {
+        "method": "GET",
+        "path": "https://accounting-extf-files.api.datev.de/platform-sandbox/v3/clients/{clientId}/extf-files/jobs/{jobId}",
+        "headers": {
+          "Accept": "application/json"
+        }
+      }
+    },
+    {
+      "name": "datev_sandbox_dxso_list_clients",
+      "description": "List DATEV clients available for accounting DXS/O jobs.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      },
+      "endpointMapping": {
+        "method": "GET",
+        "path": "https://accounting-dxso-jobs.api.datev.de/platform-sandbox/v2/clients",
+        "headers": {
+          "Accept": "application/json"
+        }
+      }
+    },
+    {
+      "name": "datev_sandbox_dxso_get_client",
+      "description": "Get basic DATEV client data from the accounting DXS/O jobs API.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "description": "DATEV Mandant/client UUID."
+          }
+        },
+        "required": [
+          "clientId"
+        ]
+      },
+      "endpointMapping": {
+        "method": "GET",
+        "path": "https://accounting-dxso-jobs.api.datev.de/platform-sandbox/v2/clients/{clientId}",
+        "headers": {
+          "Accept": "application/json"
+        }
+      }
+    },
+    {
+      "name": "datev_sandbox_dxso_create_job",
+      "description": "Create a DATEV accounting DXS/O import job. Body example: {\"import_type\":\"accountsPayableLedgerImport\",\"accounting_month\":\"2025-01\"}.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "description": "DATEV Mandant/client UUID."
+          },
+          "body": {
+            "type": [
+              "object",
+              "array"
+            ],
+            "description": "JSON request body to send to DATEV."
+          }
+        },
+        "required": [
+          "clientId",
+          "body"
+        ]
+      },
+      "endpointMapping": {
+        "method": "POST",
+        "path": "https://accounting-dxso-jobs.api.datev.de/platform-sandbox/v2/clients/{clientId}/dxso-jobs",
+        "headers": {
+          "Accept": "application/json",
+          "Content-Type": "application/json"
+        },
+        "bodyMapping": {
+          "__raw": "$body"
+        }
+      }
+    },
+    {
+      "name": "datev_sandbox_dxso_finalize_job",
+      "description": "Finalize a DATEV accounting DXS/O job after files have been attached outside this adapter.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "description": "DATEV Mandant/client UUID."
+          },
+          "dxsoJobId": {
+            "type": "string",
+            "description": "DXS/O job ID."
+          },
+          "body": {
+            "type": [
+              "object",
+              "array"
+            ],
+            "description": "JSON request body to send to DATEV."
+          }
+        },
+        "required": [
+          "clientId",
+          "dxsoJobId",
+          "body"
+        ]
+      },
+      "endpointMapping": {
+        "method": "PUT",
+        "path": "https://accounting-dxso-jobs.api.datev.de/platform-sandbox/v2/clients/{clientId}/dxso-jobs/{dxsoJobId}",
+        "headers": {
+          "Accept": "application/json",
+          "Content-Type": "application/json"
+        },
+        "bodyMapping": {
+          "__raw": "$body"
+        }
+      }
+    },
+    {
+      "name": "datev_sandbox_dxso_get_job",
+      "description": "Get the status of a DATEV accounting DXS/O job.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "description": "DATEV Mandant/client UUID."
+          },
+          "dxsoJobId": {
+            "type": "string",
+            "description": "DXS/O job ID."
+          }
+        },
+        "required": [
+          "clientId",
+          "dxsoJobId"
+        ]
+      },
+      "endpointMapping": {
+        "method": "GET",
+        "path": "https://accounting-dxso-jobs.api.datev.de/platform-sandbox/v2/clients/{clientId}/dxso-jobs/{dxsoJobId}",
+        "headers": {
+          "Accept": "application/json"
+        }
+      }
+    },
+    {
+      "name": "datev_sandbox_dxso_list_protocol_entries",
+      "description": "List protocol entries/details for a DATEV accounting DXS/O job.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "description": "DATEV Mandant/client UUID."
+          },
+          "dxsoJobId": {
+            "type": "string",
+            "description": "DXS/O job ID."
+          }
+        },
+        "required": [
+          "clientId",
+          "dxsoJobId"
+        ]
+      },
+      "endpointMapping": {
+        "method": "GET",
+        "path": "https://accounting-dxso-jobs.api.datev.de/platform-sandbox/v2/clients/{clientId}/dxso-jobs/{dxsoJobId}/protocol-entries",
+        "headers": {
+          "Accept": "application/json"
+        }
+      }
+    },
+    {
+      "name": "datev_sandbox_userinfo",
+      "description": "Return the OAuth userinfo payload for the current DATEV sandbox token.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      },
+      "endpointMapping": {
+        "method": "GET",
+        "path": "https://sandbox-api.datev.de/userinfo",
+        "headers": {
+          "Accept": "application/json"
+        }
+      }
+    },
+    {
+      "name": "datev_sandbox_mytax_list_clients",
+      "description": "List clients available for MyTax income tax document APIs.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      },
+      "endpointMapping": {
+        "method": "GET",
+        "path": "https://mytax-income-tax-documents.api.datev.de/platform-sandbox/v1/clients",
+        "headers": {
+          "Accept": "application/json"
+        }
+      }
+    },
+    {
+      "name": "datev_sandbox_mytax_get_client",
+      "description": "Get one MyTax income tax document client.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "description": "DATEV Mandant/client UUID."
+          }
+        },
+        "required": [
+          "clientId"
+        ]
+      },
+      "endpointMapping": {
+        "method": "GET",
+        "path": "https://mytax-income-tax-documents.api.datev.de/platform-sandbox/v1/clients/{clientId}",
+        "headers": {
+          "Accept": "application/json"
+        }
+      }
+    },
+    {
+      "name": "datev_sandbox_mytax_list_tax_years",
+      "description": "List available MyTax tax years for a client.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "description": "DATEV Mandant/client UUID."
+          }
+        },
+        "required": [
+          "clientId"
+        ]
+      },
+      "endpointMapping": {
+        "method": "GET",
+        "path": "https://mytax-income-tax-documents.api.datev.de/platform-sandbox/v1/clients/{clientId}/tax-years",
+        "headers": {
+          "Accept": "application/json"
+        }
+      }
+    },
+    {
+      "name": "datev_sandbox_mytax_list_folders",
+      "description": "List MyTax folders for a client and tax year.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "description": "DATEV Mandant/client UUID."
+          },
+          "taxYear": {
+            "type": "string",
+            "description": "Tax year, e.g. 2026."
+          }
+        },
+        "required": [
+          "clientId",
+          "taxYear"
+        ]
+      },
+      "endpointMapping": {
+        "method": "GET",
+        "path": "https://mytax-income-tax-documents.api.datev.de/platform-sandbox/v1/clients/{clientId}/tax-years/{taxYear}/folders",
+        "headers": {
+          "Accept": "application/json"
+        }
+      }
+    },
+    {
+      "name": "datev_sandbox_mytax_open_tax_year",
+      "description": "Open/create a new MyTax tax year for a client. Body example: {\"tax_year\":2026}.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "description": "DATEV Mandant/client UUID."
+          },
+          "body": {
+            "type": [
+              "object",
+              "array"
+            ],
+            "description": "JSON request body to send to DATEV."
+          }
+        },
+        "required": [
+          "clientId",
+          "body"
+        ]
+      },
+      "endpointMapping": {
+        "method": "POST",
+        "path": "https://mytax-income-tax-documents.api.datev.de/platform-sandbox/v1/clients/{clientId}/tax-years",
+        "headers": {
+          "Accept": "application/json",
+          "Content-Type": "application/json"
+        },
+        "bodyMapping": {
+          "__raw": "$body"
+        }
+      }
+    },
+    {
+      "name": "datev_sandbox_tax_transfer_list_clients",
+      "description": "List clients available for DATEV tax transfer.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      },
+      "endpointMapping": {
+        "method": "GET",
+        "path": "https://tax-transfer.api.datev.de/platform-sandbox/v1/clients",
+        "headers": {
+          "Accept": "application/json"
+        }
+      }
+    },
+    {
+      "name": "datev_sandbox_tax_transfer_get_client",
+      "description": "Get one DATEV tax transfer client.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "description": "DATEV Mandant/client UUID."
+          }
+        },
+        "required": [
+          "clientId"
+        ]
+      },
+      "endpointMapping": {
+        "method": "GET",
+        "path": "https://tax-transfer.api.datev.de/platform-sandbox/v1/clients/{clientId}",
+        "headers": {
+          "Accept": "application/json"
+        }
+      }
+    },
+    {
+      "name": "datev_sandbox_tax_transfer_upload_income_tax",
+      "description": "Upload an income tax declaration taxonomy JSON payload to DATEV tax transfer.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "description": "DATEV Mandant/client UUID."
+          },
+          "body": {
+            "type": [
+              "object",
+              "array"
+            ],
+            "description": "JSON request body to send to DATEV."
+          }
+        },
+        "required": [
+          "clientId",
+          "body"
+        ]
+      },
+      "endpointMapping": {
+        "method": "POST",
+        "path": "https://tax-transfer.api.datev.de/platform-sandbox/v1/clients/{clientId}/income-taxes",
+        "headers": {
+          "Accept": "application/json",
+          "Content-Type": "application/json"
+        },
+        "bodyMapping": {
+          "__raw": "$body"
+        }
+      }
+    },
+    {
+      "name": "datev_sandbox_hr_files_list_clients",
+      "description": "List clients available for DATEV HR file uploads.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      },
+      "endpointMapping": {
+        "method": "GET",
+        "path": "https://hr-files.api.datev.de/platform-sandbox/v1/clients",
+        "headers": {
+          "Accept": "application/json"
+        }
+      }
+    },
+    {
+      "name": "datev_sandbox_hr_files_get_client",
+      "description": "Get one DATEV HR files client.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "description": "DATEV Mandant/client UUID."
+          }
+        },
+        "required": [
+          "clientId"
+        ]
+      },
+      "endpointMapping": {
+        "method": "GET",
+        "path": "https://hr-files.api.datev.de/platform-sandbox/v1/clients/{clientId}",
+        "headers": {
+          "Accept": "application/json"
+        }
+      }
+    },
+    {
+      "name": "datev_sandbox_hr_files_get_job",
+      "description": "Get status for a DATEV HR file upload job.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "description": "DATEV Mandant/client UUID."
+          },
+          "jobId": {
+            "type": "string",
+            "description": "HR files upload job ID."
+          }
+        },
+        "required": [
+          "clientId",
+          "jobId"
+        ]
+      },
+      "endpointMapping": {
+        "method": "GET",
+        "path": "https://hr-files.api.datev.de/platform-sandbox/v1/clients/{clientId}/jobs/{jobId}",
+        "headers": {
+          "Accept": "application/json"
+        }
+      }
+    },
+    {
+      "name": "datev_sandbox_hr_payrollreports_list_clients",
+      "description": "List clients available for DATEV payroll reports.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      },
+      "endpointMapping": {
+        "method": "GET",
+        "path": "https://hr-payrollreports.api.datev.de/platform-sandbox/v1/clients",
+        "headers": {
+          "Accept": "application/json"
+        }
+      }
+    },
+    {
+      "name": "datev_sandbox_hr_payrollreports_get_client",
+      "description": "Get available payroll report document types for a client.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "description": "DATEV Mandant/client UUID."
+          }
+        },
+        "required": [
+          "clientId"
+        ]
+      },
+      "endpointMapping": {
+        "method": "GET",
+        "path": "https://hr-payrollreports.api.datev.de/platform-sandbox/v1/clients/{clientId}",
+        "headers": {
+          "Accept": "application/json"
+        }
+      }
+    },
+    {
+      "name": "datev_sandbox_hr_payrollreports_list_documents_metadata",
+      "description": "List payroll report document metadata for a client and period.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "description": "DATEV Mandant/client UUID."
+          },
+          "period": {
+            "type": "string",
+            "description": "Payroll report period, e.g. 2020-09-01."
+          },
+          "documentTypes": {
+            "type": "string",
+            "description": "Comma-separated document types, e.g. LOBN."
+          }
+        },
+        "required": [
+          "clientId",
+          "period"
+        ]
+      },
+      "endpointMapping": {
+        "method": "GET",
+        "path": "https://hr-payrollreports.api.datev.de/platform-sandbox/v1/clients/{clientId}/documents-metadata",
+        "headers": {
+          "Accept": "application/json"
+        },
+        "queryParams": {
+          "period": "$period",
+          "document_types": "$documentTypes"
+        }
+      }
+    },
+    {
+      "name": "datev_sandbox_hr_payrollreports_get_documents",
+      "description": "Get payroll report documents for a client and period, optionally filtered by document type and employee number.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "description": "DATEV Mandant/client UUID."
+          },
+          "period": {
+            "type": "string",
+            "description": "Payroll report period, e.g. 2020-09-01."
+          },
+          "documentTypes": {
+            "type": "string",
+            "description": "Comma-separated document types, e.g. LOBN."
+          },
+          "employeeNumber": {
+            "type": "string",
+            "description": "DATEV payroll employee/personnel number."
+          }
+        },
+        "required": [
+          "clientId",
+          "period"
+        ]
+      },
+      "endpointMapping": {
+        "method": "GET",
+        "path": "https://hr-payrollreports.api.datev.de/platform-sandbox/v1/clients/{clientId}/documents/{period}",
+        "headers": {
+          "Accept": "application/json"
+        },
+        "queryParams": {
+          "document_types": "$documentTypes",
+          "employee_number": "$employeeNumber"
+        }
+      }
+    },
+    {
+      "name": "datev_sandbox_hr_payrollreports_get_documents_status",
+      "description": "Get quickcheck/status for payroll report documents for a client and period.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "description": "DATEV Mandant/client UUID."
+          },
+          "period": {
+            "type": "string",
+            "description": "Payroll report period, e.g. 2020-09-01."
+          }
+        },
+        "required": [
+          "clientId",
+          "period"
+        ]
+      },
+      "endpointMapping": {
+        "method": "GET",
+        "path": "https://hr-payrollreports.api.datev.de/platform-sandbox/v1/clients/{clientId}/documents/{period}/status",
+        "headers": {
+          "Accept": "application/json"
+        }
+      }
+    },
+    {
+      "name": "datev_sandbox_hr_exports_list_clients",
+      "description": "List clients available for DATEV HR exports.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      },
+      "endpointMapping": {
+        "method": "GET",
+        "path": "https://hr-exports.api.datev.de/platform-sandbox/v1/clients",
+        "headers": {
+          "Accept": "application/json"
+        }
+      }
+    },
+    {
+      "name": "datev_sandbox_hr_exports_get_client",
+      "description": "Get one DATEV HR exports client.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "description": "DATEV Mandant/client UUID."
+          }
+        },
+        "required": [
+          "clientId"
+        ]
+      },
+      "endpointMapping": {
+        "method": "GET",
+        "path": "https://hr-exports.api.datev.de/platform-sandbox/v1/clients/{clientId}",
+        "headers": {
+          "Accept": "application/json"
+        }
+      }
+    },
+    {
+      "name": "datev_sandbox_hr_exports_list_employee_masterdata",
+      "description": "List employees master data for a payroll accounting month range.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "description": "DATEV Mandant/client UUID."
+          },
+          "payrollAccountingMonth": {
+            "type": "string",
+            "description": "Payroll accounting month, e.g. 2023-01."
+          },
+          "payrollAccountingMonthEnd": {
+            "type": "string",
+            "description": "Optional payroll accounting month end, e.g. 2023-02."
+          }
+        },
+        "required": [
+          "clientId",
+          "payrollAccountingMonth"
+        ]
+      },
+      "endpointMapping": {
+        "method": "GET",
+        "path": "https://hr-exports.api.datev.de/platform-sandbox/v1/clients/{clientId}/employees/masterdata",
+        "headers": {
+          "Accept": "application/json"
+        },
+        "queryParams": {
+          "payroll_accounting_month": "$payrollAccountingMonth",
+          "payroll_accounting_month_end": "$payrollAccountingMonthEnd"
+        }
+      }
+    },
+    {
+      "name": "datev_sandbox_hr_exports_get_employee_masterdata",
+      "description": "Get one employee master data export for a payroll accounting month range.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "description": "DATEV Mandant/client UUID."
+          },
+          "employeeId": {
+            "type": "string",
+            "description": "DATEV employee ID."
+          },
+          "payrollAccountingMonth": {
+            "type": "string",
+            "description": "Payroll accounting month, e.g. 2023-01."
+          },
+          "payrollAccountingMonthEnd": {
+            "type": "string",
+            "description": "Optional payroll accounting month end, e.g. 2023-02."
+          }
+        },
+        "required": [
+          "clientId",
+          "employeeId",
+          "payrollAccountingMonth"
+        ]
+      },
+      "endpointMapping": {
+        "method": "GET",
+        "path": "https://hr-exports.api.datev.de/platform-sandbox/v1/clients/{clientId}/employees/{employeeId}/masterdata",
+        "headers": {
+          "Accept": "application/json"
+        },
+        "queryParams": {
+          "payroll_accounting_month": "$payrollAccountingMonth",
+          "payroll_accounting_month_end": "$payrollAccountingMonthEnd"
+        }
+      }
+    },
+    {
+      "name": "datev_sandbox_hr_exports_list_salary_payments",
+      "description": "List employees salary payments for a payroll accounting month range.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "description": "DATEV Mandant/client UUID."
+          },
+          "payrollAccountingMonth": {
+            "type": "string",
+            "description": "Payroll accounting month, e.g. 2023-01."
+          },
+          "payrollAccountingMonthEnd": {
+            "type": "string",
+            "description": "Optional payroll accounting month end, e.g. 2023-02."
+          }
+        },
+        "required": [
+          "clientId",
+          "payrollAccountingMonth"
+        ]
+      },
+      "endpointMapping": {
+        "method": "GET",
+        "path": "https://hr-exports.api.datev.de/platform-sandbox/v1/clients/{clientId}/employees/salarypayments",
+        "headers": {
+          "Accept": "application/json"
+        },
+        "queryParams": {
+          "payroll_accounting_month": "$payrollAccountingMonth",
+          "payroll_accounting_month_end": "$payrollAccountingMonthEnd"
+        }
+      }
+    },
+    {
+      "name": "datev_sandbox_hr_exports_get_employee_salary_payments",
+      "description": "Get one employee salary payments for a payroll accounting month range.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "description": "DATEV Mandant/client UUID."
+          },
+          "employeeId": {
+            "type": "string",
+            "description": "DATEV employee ID."
+          },
+          "payrollAccountingMonth": {
+            "type": "string",
+            "description": "Payroll accounting month, e.g. 2023-01."
+          },
+          "payrollAccountingMonthEnd": {
+            "type": "string",
+            "description": "Optional payroll accounting month end, e.g. 2023-02."
+          }
+        },
+        "required": [
+          "clientId",
+          "employeeId",
+          "payrollAccountingMonth"
+        ]
+      },
+      "endpointMapping": {
+        "method": "GET",
+        "path": "https://hr-exports.api.datev.de/platform-sandbox/v1/clients/{clientId}/employees/{employeeId}/salarypayments",
+        "headers": {
+          "Accept": "application/json"
+        },
+        "queryParams": {
+          "payroll_accounting_month": "$payrollAccountingMonth",
+          "payroll_accounting_month_end": "$payrollAccountingMonthEnd"
+        }
+      }
+    },
+    {
+      "name": "datev_sandbox_hr_exports_list_salary_total_values",
+      "description": "List employees total salary values for a payroll accounting month range.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "description": "DATEV Mandant/client UUID."
+          },
+          "payrollAccountingMonth": {
+            "type": "string",
+            "description": "Payroll accounting month, e.g. 2023-01."
+          },
+          "payrollAccountingMonthEnd": {
+            "type": "string",
+            "description": "Optional payroll accounting month end, e.g. 2023-02."
+          }
+        },
+        "required": [
+          "clientId",
+          "payrollAccountingMonth"
+        ]
+      },
+      "endpointMapping": {
+        "method": "GET",
+        "path": "https://hr-exports.api.datev.de/platform-sandbox/v1/clients/{clientId}/employees/salarytotalvalues",
+        "headers": {
+          "Accept": "application/json"
+        },
+        "queryParams": {
+          "payroll_accounting_month": "$payrollAccountingMonth",
+          "payroll_accounting_month_end": "$payrollAccountingMonthEnd"
+        }
+      }
+    },
+    {
+      "name": "datev_sandbox_hr_exports_get_employee_salary_total_values",
+      "description": "Get one employee total salary values for a payroll accounting month range.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "description": "DATEV Mandant/client UUID."
+          },
+          "employeeId": {
+            "type": "string",
+            "description": "DATEV employee ID."
+          },
+          "payrollAccountingMonth": {
+            "type": "string",
+            "description": "Payroll accounting month, e.g. 2023-01."
+          },
+          "payrollAccountingMonthEnd": {
+            "type": "string",
+            "description": "Optional payroll accounting month end, e.g. 2023-02."
+          }
+        },
+        "required": [
+          "clientId",
+          "employeeId",
+          "payrollAccountingMonth"
+        ]
+      },
+      "endpointMapping": {
+        "method": "GET",
+        "path": "https://hr-exports.api.datev.de/platform-sandbox/v1/clients/{clientId}/employees/{employeeId}/salarytotalvalues",
+        "headers": {
+          "Accept": "application/json"
+        },
+        "queryParams": {
+          "payroll_accounting_month": "$payrollAccountingMonth",
+          "payroll_accounting_month_end": "$payrollAccountingMonthEnd"
+        }
+      }
+    },
+    {
+      "name": "datev_sandbox_hr_exports_list_social_security_payments",
+      "description": "List employees social security payments for a payroll accounting month range.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "description": "DATEV Mandant/client UUID."
+          },
+          "payrollAccountingMonth": {
+            "type": "string",
+            "description": "Payroll accounting month, e.g. 2023-01."
+          },
+          "payrollAccountingMonthEnd": {
+            "type": "string",
+            "description": "Optional payroll accounting month end, e.g. 2023-02."
+          }
+        },
+        "required": [
+          "clientId",
+          "payrollAccountingMonth"
+        ]
+      },
+      "endpointMapping": {
+        "method": "GET",
+        "path": "https://hr-exports.api.datev.de/platform-sandbox/v1/clients/{clientId}/employees/socialsecuritypayments",
+        "headers": {
+          "Accept": "application/json"
+        },
+        "queryParams": {
+          "payroll_accounting_month": "$payrollAccountingMonth",
+          "payroll_accounting_month_end": "$payrollAccountingMonthEnd"
+        }
+      }
+    },
+    {
+      "name": "datev_sandbox_hr_exports_get_employee_social_security_payments",
+      "description": "Get one employee social security payments for a payroll accounting month range.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "description": "DATEV Mandant/client UUID."
+          },
+          "employeeId": {
+            "type": "string",
+            "description": "DATEV employee ID."
+          },
+          "payrollAccountingMonth": {
+            "type": "string",
+            "description": "Payroll accounting month, e.g. 2023-01."
+          },
+          "payrollAccountingMonthEnd": {
+            "type": "string",
+            "description": "Optional payroll accounting month end, e.g. 2023-02."
+          }
+        },
+        "required": [
+          "clientId",
+          "employeeId",
+          "payrollAccountingMonth"
+        ]
+      },
+      "endpointMapping": {
+        "method": "GET",
+        "path": "https://hr-exports.api.datev.de/platform-sandbox/v1/clients/{clientId}/employees/{employeeId}/socialsecuritypayments",
+        "headers": {
+          "Accept": "application/json"
+        },
+        "queryParams": {
+          "payroll_accounting_month": "$payrollAccountingMonth",
+          "payroll_accounting_month_end": "$payrollAccountingMonthEnd"
+        }
+      }
+    },
+    {
+      "name": "datev_sandbox_hr_exports_list_tax_payments",
+      "description": "List employees tax payments for a payroll accounting month range.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "description": "DATEV Mandant/client UUID."
+          },
+          "payrollAccountingMonth": {
+            "type": "string",
+            "description": "Payroll accounting month, e.g. 2023-01."
+          },
+          "payrollAccountingMonthEnd": {
+            "type": "string",
+            "description": "Optional payroll accounting month end, e.g. 2023-02."
+          }
+        },
+        "required": [
+          "clientId",
+          "payrollAccountingMonth"
+        ]
+      },
+      "endpointMapping": {
+        "method": "GET",
+        "path": "https://hr-exports.api.datev.de/platform-sandbox/v1/clients/{clientId}/employees/taxpayments",
+        "headers": {
+          "Accept": "application/json"
+        },
+        "queryParams": {
+          "payroll_accounting_month": "$payrollAccountingMonth",
+          "payroll_accounting_month_end": "$payrollAccountingMonthEnd"
+        }
+      }
+    },
+    {
+      "name": "datev_sandbox_hr_exports_get_employee_tax_payments",
+      "description": "Get one employee tax payments for a payroll accounting month range.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "description": "DATEV Mandant/client UUID."
+          },
+          "employeeId": {
+            "type": "string",
+            "description": "DATEV employee ID."
+          },
+          "payrollAccountingMonth": {
+            "type": "string",
+            "description": "Payroll accounting month, e.g. 2023-01."
+          },
+          "payrollAccountingMonthEnd": {
+            "type": "string",
+            "description": "Optional payroll accounting month end, e.g. 2023-02."
+          }
+        },
+        "required": [
+          "clientId",
+          "employeeId",
+          "payrollAccountingMonth"
+        ]
+      },
+      "endpointMapping": {
+        "method": "GET",
+        "path": "https://hr-exports.api.datev.de/platform-sandbox/v1/clients/{clientId}/employees/{employeeId}/taxpayments",
+        "headers": {
+          "Accept": "application/json"
+        },
+        "queryParams": {
+          "payroll_accounting_month": "$payrollAccountingMonth",
+          "payroll_accounting_month_end": "$payrollAccountingMonthEnd"
+        }
+      }
+    },
+    {
+      "name": "datev_sandbox_hr_exports_list_absences",
+      "description": "List employees absences for a payroll accounting month range.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "description": "DATEV Mandant/client UUID."
+          },
+          "payrollAccountingMonth": {
+            "type": "string",
+            "description": "Payroll accounting month, e.g. 2023-01."
+          },
+          "payrollAccountingMonthEnd": {
+            "type": "string",
+            "description": "Optional payroll accounting month end, e.g. 2023-02."
+          }
+        },
+        "required": [
+          "clientId",
+          "payrollAccountingMonth"
+        ]
+      },
+      "endpointMapping": {
+        "method": "GET",
+        "path": "https://hr-exports.api.datev.de/platform-sandbox/v1/clients/{clientId}/employees/absences",
+        "headers": {
+          "Accept": "application/json"
+        },
+        "queryParams": {
+          "payroll_accounting_month": "$payrollAccountingMonth",
+          "payroll_accounting_month_end": "$payrollAccountingMonthEnd"
+        }
+      }
+    },
+    {
+      "name": "datev_sandbox_hr_exports_get_employee_absences",
+      "description": "Get one employee absences for a payroll accounting month range.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "description": "DATEV Mandant/client UUID."
+          },
+          "employeeId": {
+            "type": "string",
+            "description": "DATEV employee ID."
+          },
+          "payrollAccountingMonth": {
+            "type": "string",
+            "description": "Payroll accounting month, e.g. 2023-01."
+          },
+          "payrollAccountingMonthEnd": {
+            "type": "string",
+            "description": "Optional payroll accounting month end, e.g. 2023-02."
+          }
+        },
+        "required": [
+          "clientId",
+          "employeeId",
+          "payrollAccountingMonth"
+        ]
+      },
+      "endpointMapping": {
+        "method": "GET",
+        "path": "https://hr-exports.api.datev.de/platform-sandbox/v1/clients/{clientId}/employees/{employeeId}/absences",
+        "headers": {
+          "Accept": "application/json"
+        },
+        "queryParams": {
+          "payroll_accounting_month": "$payrollAccountingMonth",
+          "payroll_accounting_month_end": "$payrollAccountingMonthEnd"
+        }
+      }
+    },
+    {
+      "name": "datev_sandbox_eau_get_client",
+      "description": "Get DATEV eAU client details.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "description": "DATEV Mandant/client UUID."
+          }
+        },
+        "required": [
+          "clientId"
+        ]
+      },
+      "endpointMapping": {
+        "method": "GET",
+        "path": "https://eau.api.datev.de/platform-sandbox/v1/clients/{clientId}",
+        "headers": {
+          "Accept": "application/json"
+        }
+      }
+    },
+    {
+      "name": "datev_sandbox_eau_create_request",
+      "description": "Send an eAU request for a DATEV employee.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "description": "DATEV Mandant/client UUID."
+          },
+          "employeeId": {
+            "type": "string",
+            "description": "DATEV employee ID for eAU."
+          },
+          "body": {
+            "type": [
+              "object",
+              "array"
+            ],
+            "description": "JSON request body to send to DATEV."
+          }
+        },
+        "required": [
+          "clientId",
+          "employeeId",
+          "body"
+        ]
+      },
+      "endpointMapping": {
+        "method": "POST",
+        "path": "https://eau.api.datev.de/platform-sandbox/v1/clients/{clientId}/employees/{employeeId}/eau-requests",
+        "headers": {
+          "Accept": "application/json",
+          "Content-Type": "application/json"
+        },
+        "bodyMapping": {
+          "__raw": "$body"
+        }
+      }
+    },
+    {
+      "name": "datev_sandbox_eau_get_feedbacks",
+      "description": "Get feedback for a DATEV eAU request.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "description": "DATEV Mandant/client UUID."
+          },
+          "employeeId": {
+            "type": "string",
+            "description": "DATEV employee ID for eAU."
+          },
+          "eauId": {
+            "type": "string",
+            "description": "eAU request ID."
+          }
+        },
+        "required": [
+          "clientId",
+          "employeeId",
+          "eauId"
+        ]
+      },
+      "endpointMapping": {
+        "method": "GET",
+        "path": "https://eau.api.datev.de/platform-sandbox/v1/clients/{clientId}/employees/{employeeId}/eau-requests/{eauId}/feedbacks",
+        "headers": {
+          "Accept": "application/json"
+        }
+      }
+    },
+    {
+      "name": "datev_sandbox_eau_delete_request",
+      "description": "Delete a DATEV eAU request.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "description": "DATEV Mandant/client UUID."
+          },
+          "employeeId": {
+            "type": "string",
+            "description": "DATEV employee ID for eAU."
+          },
+          "eauId": {
+            "type": "string",
+            "description": "eAU request ID."
+          }
+        },
+        "required": [
+          "clientId",
+          "employeeId",
+          "eauId"
+        ]
+      },
+      "endpointMapping": {
+        "method": "DELETE",
+        "path": "https://eau.api.datev.de/platform-sandbox/v1/clients/{clientId}/employees/{employeeId}/eau-requests/{eauId}",
+        "headers": {
+          "Accept": "application/json"
+        }
+      }
+    },
+    {
+      "name": "datev_sandbox_hr_documents_list_clients",
+      "description": "List clients available for DATEV HR documents.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      },
+      "endpointMapping": {
+        "method": "GET",
+        "path": "https://hr-documents.api.datev.de/platform-sandbox/v1/clients",
+        "headers": {
+          "Accept": "application/json"
+        }
+      }
+    },
+    {
+      "name": "datev_sandbox_hr_documents_get_client",
+      "description": "Get one DATEV HR documents client.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "description": "DATEV Mandant/client UUID."
+          }
+        },
+        "required": [
+          "clientId"
+        ]
+      },
+      "endpointMapping": {
+        "method": "GET",
+        "path": "https://hr-documents.api.datev.de/platform-sandbox/v1/clients/{clientId}",
+        "headers": {
+          "Accept": "application/json"
+        }
+      }
+    },
+    {
+      "name": "datev_sandbox_hr_documents_health",
+      "description": "Check DATEV HR documents API health.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      },
+      "endpointMapping": {
+        "method": "GET",
+        "path": "https://hr-documents.api.datev.de/platform-sandbox/v1/actuator/health",
+        "headers": {
+          "Accept": "application/json"
+        }
+      }
+    },
+    {
+      "name": "datev_sandbox_hr_exchange_get_client",
+      "description": "Get DATEV HR exchange client details.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "description": "DATEV Mandant/client UUID."
+          }
+        },
+        "required": [
+          "clientId"
+        ]
+      },
+      "endpointMapping": {
+        "method": "GET",
+        "path": "https://hr-exchange.api.datev.de/platform-sandbox/v1/clients/{clientId}",
+        "headers": {
+          "Accept": "application/json"
+        }
+      }
+    },
+    {
+      "name": "datev_sandbox_hr_exchange_create_absences_lodas",
+      "description": "Create LODAS absences for an employee in DATEV HR exchange.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "description": "DATEV Mandant/client UUID."
+          },
+          "employeeNumber": {
+            "type": "string",
+            "description": "DATEV payroll employee/personnel number."
+          },
+          "referenceDate": {
+            "type": "string",
+            "description": "Reference date/month, usually YYYY-MM or YYYY-MM-DD depending on endpoint."
+          },
+          "body": {
+            "type": [
+              "object",
+              "array"
+            ],
+            "description": "JSON request body to send to DATEV."
+          }
+        },
+        "required": [
+          "clientId",
+          "employeeNumber",
+          "referenceDate",
+          "body"
+        ]
+      },
+      "endpointMapping": {
+        "method": "POST",
+        "path": "https://hr-exchange.api.datev.de/platform-sandbox/v1/clients/{clientId}/employees/{employeeNumber}/absences/lodas",
+        "headers": {
+          "Accept": "application/json",
+          "Content-Type": "application/json"
+        },
+        "queryParams": {
+          "reference-date": "$referenceDate"
+        },
+        "bodyMapping": {
+          "__raw": "$body"
+        }
+      }
+    },
+    {
+      "name": "datev_sandbox_hr_exchange_create_absences_lug",
+      "description": "Create Lohn und Gehalt absences for an employee in DATEV HR exchange.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "description": "DATEV Mandant/client UUID."
+          },
+          "employeeNumber": {
+            "type": "string",
+            "description": "DATEV payroll employee/personnel number."
+          },
+          "referenceDate": {
+            "type": "string",
+            "description": "Reference date/month, usually YYYY-MM or YYYY-MM-DD depending on endpoint."
+          },
+          "body": {
+            "type": [
+              "object",
+              "array"
+            ],
+            "description": "JSON request body to send to DATEV."
+          }
+        },
+        "required": [
+          "clientId",
+          "employeeNumber",
+          "referenceDate",
+          "body"
+        ]
+      },
+      "endpointMapping": {
+        "method": "POST",
+        "path": "https://hr-exchange.api.datev.de/platform-sandbox/v1/clients/{clientId}/employees/{employeeNumber}/absences/lug",
+        "headers": {
+          "Accept": "application/json",
+          "Content-Type": "application/json"
+        },
+        "queryParams": {
+          "reference-date": "$referenceDate"
+        },
+        "bodyMapping": {
+          "__raw": "$body"
+        }
+      }
+    },
+    {
+      "name": "datev_sandbox_hr_exchange_delete_absence_lodas",
+      "description": "Delete one LODAS absence for an employee in DATEV HR exchange.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "description": "DATEV Mandant/client UUID."
+          },
+          "employeeNumber": {
+            "type": "string",
+            "description": "DATEV payroll employee/personnel number."
+          },
+          "absenceStartDate": {
+            "type": "string",
+            "description": "Absence start date to delete, e.g. 2025-02-01."
+          },
+          "referenceDate": {
+            "type": "string",
+            "description": "Reference date/month, usually YYYY-MM or YYYY-MM-DD depending on endpoint."
+          }
+        },
+        "required": [
+          "clientId",
+          "employeeNumber",
+          "absenceStartDate",
+          "referenceDate"
+        ]
+      },
+      "endpointMapping": {
+        "method": "DELETE",
+        "path": "https://hr-exchange.api.datev.de/platform-sandbox/v1/clients/{clientId}/employees/{employeeNumber}/absences/lodas/{absenceStartDate}",
+        "headers": {
+          "Accept": "application/json"
+        },
+        "queryParams": {
+          "reference-date": "$referenceDate"
+        }
+      }
+    },
+    {
+      "name": "datev_sandbox_hr_exchange_delete_absence_lug",
+      "description": "Delete one Lohn und Gehalt absence for an employee in DATEV HR exchange.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "description": "DATEV Mandant/client UUID."
+          },
+          "employeeNumber": {
+            "type": "string",
+            "description": "DATEV payroll employee/personnel number."
+          },
+          "absenceId": {
+            "type": "string",
+            "description": "Lohn und Gehalt absence ID to delete."
+          },
+          "referenceDate": {
+            "type": "string",
+            "description": "Reference date/month, usually YYYY-MM or YYYY-MM-DD depending on endpoint."
+          }
+        },
+        "required": [
+          "clientId",
+          "employeeNumber",
+          "absenceId",
+          "referenceDate"
+        ]
+      },
+      "endpointMapping": {
+        "method": "DELETE",
+        "path": "https://hr-exchange.api.datev.de/platform-sandbox/v1/clients/{clientId}/employees/{employeeNumber}/absences/lug/{absenceId}",
+        "headers": {
+          "Accept": "application/json"
+        },
+        "queryParams": {
+          "reference-date": "$referenceDate"
+        }
+      }
+    },
+    {
+      "name": "datev_sandbox_hr_exchange_create_employees",
+      "description": "Create one or more employees in DATEV HR exchange.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "description": "DATEV Mandant/client UUID."
+          },
+          "referenceDate": {
+            "type": "string",
+            "description": "Reference date/month, usually YYYY-MM or YYYY-MM-DD depending on endpoint."
+          },
+          "body": {
+            "type": [
+              "object",
+              "array"
+            ],
+            "description": "JSON request body to send to DATEV."
+          }
+        },
+        "required": [
+          "clientId",
+          "referenceDate",
+          "body"
+        ]
+      },
+      "endpointMapping": {
+        "method": "POST",
+        "path": "https://hr-exchange.api.datev.de/platform-sandbox/v1/clients/{clientId}/employees",
+        "headers": {
+          "Accept": "application/json",
+          "Content-Type": "application/json"
+        },
+        "queryParams": {
+          "reference-date": "$referenceDate"
+        },
+        "bodyMapping": {
+          "__raw": "$body"
+        }
+      }
+    },
+    {
+      "name": "datev_sandbox_hr_exchange_update_employees",
+      "description": "Update one or more employees in DATEV HR exchange.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "description": "DATEV Mandant/client UUID."
+          },
+          "referenceDate": {
+            "type": "string",
+            "description": "Reference date/month, usually YYYY-MM or YYYY-MM-DD depending on endpoint."
+          },
+          "body": {
+            "type": [
+              "object",
+              "array"
+            ],
+            "description": "JSON request body to send to DATEV."
+          }
+        },
+        "required": [
+          "clientId",
+          "referenceDate",
+          "body"
+        ]
+      },
+      "endpointMapping": {
+        "method": "PUT",
+        "path": "https://hr-exchange.api.datev.de/platform-sandbox/v1/clients/{clientId}/employees",
+        "headers": {
+          "Accept": "application/json",
+          "Content-Type": "application/json"
+        },
+        "queryParams": {
+          "reference-date": "$referenceDate"
+        },
+        "bodyMapping": {
+          "__raw": "$body"
+        }
+      }
+    },
+    {
+      "name": "datev_sandbox_hr_exchange_update_employee",
+      "description": "Update one employee in DATEV HR exchange.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "description": "DATEV Mandant/client UUID."
+          },
+          "employeeNumber": {
+            "type": "string",
+            "description": "DATEV payroll employee/personnel number."
+          },
+          "referenceDate": {
+            "type": "string",
+            "description": "Reference date/month, usually YYYY-MM or YYYY-MM-DD depending on endpoint."
+          },
+          "body": {
+            "type": [
+              "object",
+              "array"
+            ],
+            "description": "JSON request body to send to DATEV."
+          }
+        },
+        "required": [
+          "clientId",
+          "employeeNumber",
+          "referenceDate",
+          "body"
+        ]
+      },
+      "endpointMapping": {
+        "method": "PUT",
+        "path": "https://hr-exchange.api.datev.de/platform-sandbox/v1/clients/{clientId}/employees/{employeeNumber}",
+        "headers": {
+          "Accept": "application/json",
+          "Content-Type": "application/json"
+        },
+        "queryParams": {
+          "reference-date": "$referenceDate"
+        },
+        "bodyMapping": {
+          "__raw": "$body"
+        }
+      }
+    },
+    {
+      "name": "datev_sandbox_hr_exchange_add_employment_period",
+      "description": "Add an employment period for an employee in DATEV HR exchange.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "description": "DATEV Mandant/client UUID."
+          },
+          "employeeNumber": {
+            "type": "string",
+            "description": "DATEV payroll employee/personnel number."
+          },
+          "referenceDate": {
+            "type": "string",
+            "description": "Reference date/month, usually YYYY-MM or YYYY-MM-DD depending on endpoint."
+          },
+          "body": {
+            "type": [
+              "object",
+              "array"
+            ],
+            "description": "JSON request body to send to DATEV."
+          }
+        },
+        "required": [
+          "clientId",
+          "employeeNumber",
+          "referenceDate",
+          "body"
+        ]
+      },
+      "endpointMapping": {
+        "method": "POST",
+        "path": "https://hr-exchange.api.datev.de/platform-sandbox/v1/clients/{clientId}/employees/{employeeNumber}/employment-periods",
+        "headers": {
+          "Accept": "application/json",
+          "Content-Type": "application/json"
+        },
+        "queryParams": {
+          "reference-date": "$referenceDate"
+        },
+        "bodyMapping": {
+          "__raw": "$body"
+        }
+      }
+    },
+    {
+      "name": "datev_sandbox_hr_exchange_update_employment_period",
+      "description": "Update an employment period for an employee in DATEV HR exchange.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "description": "DATEV Mandant/client UUID."
+          },
+          "employeeNumber": {
+            "type": "string",
+            "description": "DATEV payroll employee/personnel number."
+          },
+          "periodStartDate": {
+            "type": "string",
+            "description": "Employment period start date, e.g. 2023-08-01."
+          },
+          "referenceDate": {
+            "type": "string",
+            "description": "Reference date/month, usually YYYY-MM or YYYY-MM-DD depending on endpoint."
+          },
+          "body": {
+            "type": [
+              "object",
+              "array"
+            ],
+            "description": "JSON request body to send to DATEV."
+          }
+        },
+        "required": [
+          "clientId",
+          "employeeNumber",
+          "periodStartDate",
+          "referenceDate",
+          "body"
+        ]
+      },
+      "endpointMapping": {
+        "method": "PUT",
+        "path": "https://hr-exchange.api.datev.de/platform-sandbox/v1/clients/{clientId}/employees/{employeeNumber}/employment-periods/{periodStartDate}",
+        "headers": {
+          "Accept": "application/json",
+          "Content-Type": "application/json"
+        },
+        "queryParams": {
+          "reference-date": "$referenceDate"
+        },
+        "bodyMapping": {
+          "__raw": "$body"
+        }
+      }
+    },
+    {
+      "name": "datev_sandbox_hr_exchange_delete_employment_period",
+      "description": "Delete an employment period for an employee in DATEV HR exchange.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "description": "DATEV Mandant/client UUID."
+          },
+          "employeeNumber": {
+            "type": "string",
+            "description": "DATEV payroll employee/personnel number."
+          },
+          "periodStartDate": {
+            "type": "string",
+            "description": "Employment period start date, e.g. 2023-08-01."
+          },
+          "referenceDate": {
+            "type": "string",
+            "description": "Reference date/month, usually YYYY-MM or YYYY-MM-DD depending on endpoint."
+          }
+        },
+        "required": [
+          "clientId",
+          "employeeNumber",
+          "periodStartDate",
+          "referenceDate"
+        ]
+      },
+      "endpointMapping": {
+        "method": "DELETE",
+        "path": "https://hr-exchange.api.datev.de/platform-sandbox/v1/clients/{clientId}/employees/{employeeNumber}/employment-periods/{periodStartDate}",
+        "headers": {
+          "Accept": "application/json"
+        },
+        "queryParams": {
+          "reference-date": "$referenceDate"
+        }
+      }
+    },
+    {
+      "name": "datev_sandbox_hr_exchange_add_gross_payments",
+      "description": "Add gross payments for an employee in DATEV HR exchange.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "description": "DATEV Mandant/client UUID."
+          },
+          "employeeNumber": {
+            "type": "string",
+            "description": "DATEV payroll employee/personnel number."
+          },
+          "referenceDate": {
+            "type": "string",
+            "description": "Reference date/month, usually YYYY-MM or YYYY-MM-DD depending on endpoint."
+          },
+          "body": {
+            "type": [
+              "object",
+              "array"
+            ],
+            "description": "JSON request body to send to DATEV."
+          }
+        },
+        "required": [
+          "clientId",
+          "employeeNumber",
+          "referenceDate",
+          "body"
+        ]
+      },
+      "endpointMapping": {
+        "method": "POST",
+        "path": "https://hr-exchange.api.datev.de/platform-sandbox/v1/clients/{clientId}/employees/{employeeNumber}/gross-payments",
+        "headers": {
+          "Accept": "application/json",
+          "Content-Type": "application/json"
+        },
+        "queryParams": {
+          "reference-date": "$referenceDate"
+        },
+        "bodyMapping": {
+          "__raw": "$body"
+        }
+      }
+    },
+    {
+      "name": "datev_sandbox_hr_exchange_update_gross_payments",
+      "description": "Update gross payments for an employee in DATEV HR exchange.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "description": "DATEV Mandant/client UUID."
+          },
+          "employeeNumber": {
+            "type": "string",
+            "description": "DATEV payroll employee/personnel number."
+          },
+          "referenceDate": {
+            "type": "string",
+            "description": "Reference date/month, usually YYYY-MM or YYYY-MM-DD depending on endpoint."
+          },
+          "body": {
+            "type": [
+              "object",
+              "array"
+            ],
+            "description": "JSON request body to send to DATEV."
+          }
+        },
+        "required": [
+          "clientId",
+          "employeeNumber",
+          "referenceDate",
+          "body"
+        ]
+      },
+      "endpointMapping": {
+        "method": "PUT",
+        "path": "https://hr-exchange.api.datev.de/platform-sandbox/v1/clients/{clientId}/employees/{employeeNumber}/gross-payments",
+        "headers": {
+          "Accept": "application/json",
+          "Content-Type": "application/json"
+        },
+        "queryParams": {
+          "reference-date": "$referenceDate"
+        },
+        "bodyMapping": {
+          "__raw": "$body"
+        }
+      }
+    },
+    {
+      "name": "datev_sandbox_hr_exchange_add_hourly_wages",
+      "description": "Add hourly wages for an employee in DATEV HR exchange.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "description": "DATEV Mandant/client UUID."
+          },
+          "employeeNumber": {
+            "type": "string",
+            "description": "DATEV payroll employee/personnel number."
+          },
+          "referenceDate": {
+            "type": "string",
+            "description": "Reference date/month, usually YYYY-MM or YYYY-MM-DD depending on endpoint."
+          },
+          "body": {
+            "type": [
+              "object",
+              "array"
+            ],
+            "description": "JSON request body to send to DATEV."
+          }
+        },
+        "required": [
+          "clientId",
+          "employeeNumber",
+          "referenceDate",
+          "body"
+        ]
+      },
+      "endpointMapping": {
+        "method": "POST",
+        "path": "https://hr-exchange.api.datev.de/platform-sandbox/v1/clients/{clientId}/employees/{employeeNumber}/hourly-wages",
+        "headers": {
+          "Accept": "application/json",
+          "Content-Type": "application/json"
+        },
+        "queryParams": {
+          "reference-date": "$referenceDate"
+        },
+        "bodyMapping": {
+          "__raw": "$body"
+        }
+      }
+    },
+    {
+      "name": "datev_sandbox_hr_exchange_update_hourly_wages",
+      "description": "Update hourly wages for an employee in DATEV HR exchange.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "description": "DATEV Mandant/client UUID."
+          },
+          "employeeNumber": {
+            "type": "string",
+            "description": "DATEV payroll employee/personnel number."
+          },
+          "referenceDate": {
+            "type": "string",
+            "description": "Reference date/month, usually YYYY-MM or YYYY-MM-DD depending on endpoint."
+          },
+          "body": {
+            "type": [
+              "object",
+              "array"
+            ],
+            "description": "JSON request body to send to DATEV."
+          }
+        },
+        "required": [
+          "clientId",
+          "employeeNumber",
+          "referenceDate",
+          "body"
+        ]
+      },
+      "endpointMapping": {
+        "method": "PUT",
+        "path": "https://hr-exchange.api.datev.de/platform-sandbox/v1/clients/{clientId}/employees/{employeeNumber}/hourly-wages",
+        "headers": {
+          "Accept": "application/json",
+          "Content-Type": "application/json"
+        },
+        "queryParams": {
+          "reference-date": "$referenceDate"
+        },
+        "bodyMapping": {
+          "__raw": "$body"
+        }
+      }
+    },
+    {
+      "name": "datev_sandbox_hr_exchange_add_employee_month_records",
+      "description": "Add monthly records for one employee in DATEV HR exchange.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "description": "DATEV Mandant/client UUID."
+          },
+          "employeeNumber": {
+            "type": "string",
+            "description": "DATEV payroll employee/personnel number."
+          },
+          "referenceDate": {
+            "type": "string",
+            "description": "Reference date/month, usually YYYY-MM or YYYY-MM-DD depending on endpoint."
+          },
+          "body": {
+            "type": [
+              "object",
+              "array"
+            ],
+            "description": "JSON request body to send to DATEV."
+          }
+        },
+        "required": [
+          "clientId",
+          "employeeNumber",
+          "referenceDate",
+          "body"
+        ]
+      },
+      "endpointMapping": {
+        "method": "POST",
+        "path": "https://hr-exchange.api.datev.de/platform-sandbox/v1/clients/{clientId}/employees/{employeeNumber}/month-records",
+        "headers": {
+          "Accept": "application/json",
+          "Content-Type": "application/json"
+        },
+        "queryParams": {
+          "reference-date": "$referenceDate"
+        },
+        "bodyMapping": {
+          "__raw": "$body"
+        }
+      }
+    },
+    {
+      "name": "datev_sandbox_hr_exchange_add_month_records",
+      "description": "Add monthly records for multiple employees in DATEV HR exchange.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "description": "DATEV Mandant/client UUID."
+          },
+          "referenceDate": {
+            "type": "string",
+            "description": "Reference date/month, usually YYYY-MM or YYYY-MM-DD depending on endpoint."
+          },
+          "body": {
+            "type": [
+              "object",
+              "array"
+            ],
+            "description": "JSON request body to send to DATEV."
+          }
+        },
+        "required": [
+          "clientId",
+          "referenceDate",
+          "body"
+        ]
+      },
+      "endpointMapping": {
+        "method": "POST",
+        "path": "https://hr-exchange.api.datev.de/platform-sandbox/v1/clients/{clientId}/month-records",
+        "headers": {
+          "Accept": "application/json",
+          "Content-Type": "application/json"
+        },
+        "queryParams": {
+          "reference-date": "$referenceDate"
+        },
+        "bodyMapping": {
+          "__raw": "$body"
+        }
+      }
+    },
+    {
+      "name": "datev_sandbox_hr_exchange_trigger_job",
+      "description": "Trigger a DATEV HR exchange export job. Body controls resource_name, id, sub_resource, and reference_date.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "description": "DATEV Mandant/client UUID."
+          },
+          "body": {
+            "type": [
+              "object",
+              "array"
+            ],
+            "description": "JSON request body to send to DATEV."
+          }
+        },
+        "required": [
+          "clientId",
+          "body"
+        ]
+      },
+      "endpointMapping": {
+        "method": "POST",
+        "path": "https://hr-exchange.api.datev.de/platform-sandbox/v1/clients/{clientId}/jobs",
+        "headers": {
+          "Accept": "application/json",
+          "Content-Type": "application/json"
+        },
+        "bodyMapping": {
+          "__raw": "$body"
+        }
+      }
+    },
+    {
+      "name": "datev_sandbox_hr_exchange_get_job_result",
+      "description": "Fetch a DATEV HR exchange job result. resultPath can be values like client-data, employees, employment-periods, month-records, absences/lodas, or errors.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "description": "DATEV Mandant/client UUID."
+          },
+          "jobId": {
+            "type": "string",
+            "description": "DATEV HR exchange job ID."
+          },
+          "resultPath": {
+            "type": "string",
+            "description": "Job result path, e.g. employees or absences/lodas."
+          }
+        },
+        "required": [
+          "clientId",
+          "jobId",
+          "resultPath"
+        ]
+      },
+      "endpointMapping": {
+        "method": "GET",
+        "path": "https://hr-exchange.api.datev.de/platform-sandbox/v1/clients/{clientId}/jobs/{jobId}/result/{resultPath}",
+        "headers": {
+          "Accept": "application/json"
+        }
+      }
+    },
+    {
+      "name": "datev_sandbox_dataexchange_list_clients",
+      "description": "List DATEV accounting clients provisioned for the Datenservice Export Rechnungswesen (accounting:dataexchange) — read-only export of finalized accounting data.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      },
+      "endpointMapping": {
+        "method": "GET",
+        "path": "https://accounting-dataexchange.api.datev.de/platform-sandbox/v1/clients",
+        "headers": {
+          "Accept": "application/json"
+        }
+      }
+    },
+    {
+      "name": "datev_sandbox_dataexchange_get_client",
+      "description": "Get one DATEV Datenservice Export Rechnungswesen client's basic data (fiscal year, enabled export categories).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "description": "DATEV Mandant/client UUID."
+          }
+        },
+        "required": [
+          "clientId"
+        ]
+      },
+      "endpointMapping": {
+        "method": "GET",
+        "path": "https://accounting-dataexchange.api.datev.de/platform-sandbox/v1/clients/{clientId}",
+        "headers": {
+          "Accept": "application/json"
+        }
+      }
+    },
+    {
+      "name": "datev_sandbox_dataexchange_trigger_job",
+      "description": "Trigger a DATEV accounting data-exchange export job for finalized bookkeeping data. Body controls resource_name (e.g. 'postings' for Kontobuchungen, 'accounts' or 'debtors-creditors' for Stammdaten, 'open-items' for OffenePostenListeGeschäftspartner, 'evaluations' for AuswertungenExport, 'fiscal-years'), plus optional date range / reference_date filters. Only data already posted and finalized (festgeschrieben) in DATEV Rechnungswesen is exportable.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "description": "DATEV Mandant/client UUID."
+          },
+          "body": {
+            "type": [
+              "object",
+              "array"
+            ],
+            "description": "JSON request body to send to DATEV, e.g. {\"resource_name\":\"postings\",\"fiscal_year\":2026}."
+          }
+        },
+        "required": [
+          "clientId",
+          "body"
+        ]
+      },
+      "endpointMapping": {
+        "method": "POST",
+        "path": "https://accounting-dataexchange.api.datev.de/platform-sandbox/v1/clients/{clientId}/jobs",
+        "headers": {
+          "Accept": "application/json",
+          "Content-Type": "application/json"
+        },
+        "bodyMapping": {
+          "__raw": "$body"
+        }
+      }
+    },
+    {
+      "name": "datev_sandbox_dataexchange_get_job",
+      "description": "Get the status of a DATEV accounting data-exchange export job (pending/done/error), following the same async trigger-then-poll pattern as accounting DXS/O and HR exchange jobs.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "description": "DATEV Mandant/client UUID."
+          },
+          "jobId": {
+            "type": "string",
+            "description": "Data-exchange job ID returned by datev_sandbox_dataexchange_trigger_job."
+          }
+        },
+        "required": [
+          "clientId",
+          "jobId"
+        ]
+      },
+      "endpointMapping": {
+        "method": "GET",
+        "path": "https://accounting-dataexchange.api.datev.de/platform-sandbox/v1/clients/{clientId}/jobs/{jobId}",
+        "headers": {
+          "Accept": "application/json"
+        }
+      }
+    },
+    {
+      "name": "datev_sandbox_dataexchange_get_job_result",
+      "description": "Fetch the result of a completed DATEV accounting data-exchange export job. resultPath mirrors the resource_name used to trigger it (e.g. 'postings', 'accounts', 'debtors-creditors', 'open-items', 'evaluations', 'fiscal-years', or 'errors').",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "description": "DATEV Mandant/client UUID."
+          },
+          "jobId": {
+            "type": "string",
+            "description": "Data-exchange job ID."
+          },
+          "resultPath": {
+            "type": "string",
+            "description": "Result path, e.g. 'postings' or 'open-items'."
+          }
+        },
+        "required": [
+          "clientId",
+          "jobId",
+          "resultPath"
+        ]
+      },
+      "endpointMapping": {
+        "method": "GET",
+        "path": "https://accounting-dataexchange.api.datev.de/platform-sandbox/v1/clients/{clientId}/jobs/{jobId}/result/{resultPath}",
         "headers": {
           "Accept": "application/json"
         }

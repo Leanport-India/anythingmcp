@@ -63,36 +63,45 @@ export class McpOAuthCallbackController {
         redirectUri: flow.redirectUri,
         clientId: flow.clientId,
         clientSecret: flow.clientSecret,
-        codeVerifier: flow.codeVerifier,
         tokenAuthMethod: flow.tokenAuthMethod,
+        codeVerifier: flow.codeVerifier,
       });
 
       this.logger.log(
         `OAuth tokens obtained for connector ${flow.connectorId}`,
       );
 
-      // 2. Store tokens (encrypted) in the connector's authConfig. Merge, don't
-      // replace — preserves static config (authorizationUrl, scopes) needed for
-      // later re-authorization.
-      await this.connectorsService.updateAuthConfigMerge(flow.connectorId, {
-        accessToken: tokens.accessToken,
-        refreshToken: tokens.refreshToken,
-        tokenUrl: flow.tokenUrl,
-        clientId: flow.clientId,
-        clientSecret: flow.clientSecret,
-        tokenAuthMethod: flow.tokenAuthMethod,
-        expiresIn: tokens.expiresIn,
-        expiresAt: Date.now() + (tokens.expiresIn || 3600) * 1000,
-        authorizedAt: new Date().toISOString(),
-      });
+      // 2. Store tokens (encrypted) in the connector's authConfig.
+      // Preserve static OAuth settings (authorizationUrl, scopes, auth method)
+      // so a successful callback does not make later re-authorization impossible.
+      const existingConnector = await this.connectorsService.findByIdInternal(
+        flow.connectorId,
+      );
+      const existingAuthConfig =
+        this.connectorsService.getDecryptedAuthConfig(existingConnector) || {};
+
+      await this.connectorsService.update(
+        flow.connectorId,
+        {
+          authConfig: {
+            ...existingAuthConfig,
+            accessToken: tokens.accessToken,
+            refreshToken:
+              tokens.refreshToken || existingAuthConfig.refreshToken,
+            tokenUrl: flow.tokenUrl,
+            clientId: flow.clientId,
+            clientSecret: flow.clientSecret,
+            tokenAuthMethod:
+              flow.tokenAuthMethod || existingAuthConfig.tokenAuthMethod,
+            expiresIn: tokens.expiresIn,
+            expiresAt: Date.now() + (tokens.expiresIn || 3600) * 1000,
+            authorizedAt: new Date().toISOString(),
+          },
+        },
+      );
 
       // Reload the connector's tools into the in-memory MCP registry so the
-      // freshly-stored access token takes effect immediately. The registry
-      // caches a snapshot of authConfig (incl. the token) per tool, so without
-      // this a just-authorized connector would keep serving with the stale
-      // (token-less) snapshot. For REST/GraphQL OAuth connectors this is the
-      // ONLY reload — the MCP auto-discovery block below throws for non-MCP
-      // servers and never reaches its own reloadConnectorTools() call.
+      // freshly stored access token takes effect immediately.
       try {
         await this.mcpServer.reloadConnectorTools(flow.connectorId);
       } catch (reloadErr: any) {
@@ -101,7 +110,7 @@ export class McpOAuthCallbackController {
         );
       }
 
-      // 3. Auto-discover tools from the remote MCP server (MCP connectors only)
+      // 3. Auto-discover tools from the remote MCP server
       let toolsImported = 0;
       try {
         const connector = await this.connectorsService.findByIdInternal(
@@ -161,8 +170,14 @@ export class McpOAuthCallbackController {
         `${frontendUrl}/connectors/${flow.connectorId}?oauth=success&tools=${toolsImported}`,
       );
     } catch (error: any) {
+      const providerStatus = error?.response?.status;
+      const providerData = error?.response?.data;
       this.logger.error(
-        `OAuth callback failed for connector ${flow.connectorId}: ${error.message}`,
+        `OAuth callback failed for connector ${flow.connectorId}: ${error.message}` +
+          (providerStatus ? ` providerStatus=${providerStatus}` : '') +
+          (providerData
+            ? ` providerResponse=${JSON.stringify(providerData)}`
+            : ''),
       );
       this.mcpOAuthService.deletePendingFlow(state);
       return res.redirect(

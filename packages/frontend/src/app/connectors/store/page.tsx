@@ -105,6 +105,7 @@ const CATEGORY_LABELS: Record<string, string> = {
   'field-service': 'Field Service',
   accounting: 'Accounting',
   hr: 'HR',
+  identity: 'Identity',
   messaging: 'Messaging',
   crm: 'CRM',
   email: 'Email',

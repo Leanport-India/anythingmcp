@@ -671,6 +671,7 @@ export class ConnectorsController {
       let authorizationEndpoint: string;
       let tokenEndpoint: string;
       let scope: string | undefined;
+      let tokenAuthMethod: string | undefined;
 
       if (connector.type === 'MCP') {
         // MCP: discover OAuth metadata from remote server
@@ -699,6 +700,9 @@ export class ConnectorsController {
         authorizationEndpoint = String(authConfig.authorizationUrl || '');
         tokenEndpoint = String(authConfig.tokenUrl || '');
         scope = authConfig.scopes ? String(authConfig.scopes) : undefined;
+        tokenAuthMethod = authConfig.tokenAuthMethod
+          ? String(authConfig.tokenAuthMethod)
+          : undefined;
       }
 
       if (!clientId) {
@@ -721,6 +725,7 @@ export class ConnectorsController {
         redirectUri: callbackUrl,
         clientId,
         clientSecret,
+        tokenAuthMethod,
         tokenUrl: tokenEndpoint,
         tokenAuthMethod: authConfig.tokenAuthMethod
           ? String(authConfig.tokenAuthMethod)
@@ -1092,13 +1097,38 @@ export class ConnectorsController {
         ...((connector.envVars as Record<string, string> | null) || {}),
         ...envVars,
       };
+      const existingAuthConfig = connector.authConfig
+        ? JSON.parse(decrypt(connector.authConfig, this.encryptionKey))
+        : {};
       if (adapter.connector.authConfig) {
-        updateData.authConfig = interpolateDeep(
+        const resolvedAuthConfig = interpolateDeep(
           adapter.connector.authConfig as Record<string, unknown>,
           merged,
-        );
+        ) as Record<string, unknown>;
+        updateData.authConfig = {
+          ...resolvedAuthConfig,
+          // Preserve runtime OAuth state. Re-rendering a catalog authConfig from
+          // env vars must not wipe a valid consent grant or force sandbox
+          // connectors back to production endpoints.
+          accessToken: existingAuthConfig.accessToken,
+          refreshToken: existingAuthConfig.refreshToken,
+          expiresAt: existingAuthConfig.expiresAt,
+          expiresIn: existingAuthConfig.expiresIn,
+          authorizedAt: existingAuthConfig.authorizedAt,
+          lastRefreshedAt: existingAuthConfig.lastRefreshedAt,
+          authorizationUrl:
+            existingAuthConfig.authorizationUrl ||
+            resolvedAuthConfig.authorizationUrl,
+          tokenUrl: existingAuthConfig.tokenUrl || resolvedAuthConfig.tokenUrl,
+          tokenAuthMethod:
+            existingAuthConfig.tokenAuthMethod ||
+            resolvedAuthConfig.tokenAuthMethod,
+          scopes: existingAuthConfig.scopes || resolvedAuthConfig.scopes,
+        };
       }
-      updateData.baseUrl = interpolateString(adapter.connector.baseUrl, merged);
+      if (adapter.connector.baseUrl.includes('{{')) {
+        updateData.baseUrl = interpolateString(adapter.connector.baseUrl, merged);
+      }
       const adapterHeaders = (
         adapter.connector as { headers?: Record<string, string> }
       ).headers;

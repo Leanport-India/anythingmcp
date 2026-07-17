@@ -9,6 +9,17 @@ import { assertSafeOutboundUrl } from '../../common/ssrf.util';
 /** Refresh tokens that expire within this window (5 minutes). */
 const PROACTIVE_REFRESH_BUFFER_MS = 5 * 60 * 1000;
 
+function usesBasicTokenAuth(method?: string): boolean {
+  return method === 'basic' || method === 'client_secret_basic';
+}
+
+function buildBasicTokenAuthHeader(clientId: string, clientSecret: string): string {
+  // OAuth2 client_secret_basic uses form-encoding before base64 (RFC 6749 §2.3.1).
+  const user = encodeURIComponent(clientId);
+  const pass = encodeURIComponent(clientSecret);
+  return `Basic ${Buffer.from(`${user}:${pass}`).toString('base64')}`;
+}
+
 /**
  * Shared OAuth2 token management: in-memory cache, proactive refresh, and DB persistence.
  * Used by RestEngine, GraphqlEngine, and McpClientEngine to handle OAuth2 token lifecycle.
@@ -100,12 +111,8 @@ export class OAuth2TokenService {
     authConfig: Record<string, unknown>,
     connectorId?: string,
   ): Promise<string | null> {
-    // Rolling refresh tokens (e.g. DATEV rotates the refresh token on every
-    // use) invalidate the previous one. The in-memory registry caches an
-    // authConfig snapshot that is NOT updated after a refresh — only the DB is
-    // (persistRefreshedToken). So for a persisted connector always re-read the
-    // freshest authConfig from the DB before refreshing; otherwise a second
-    // refresh would replay the already-rotated token and DATEV would reject it.
+    // Rolling refresh tokens invalidate the previous refresh token after every
+    // use, so reload the persisted config before refreshing a DB-backed connector.
     if (connectorId) {
       const fresh = await this.loadAuthConfigFromDb(connectorId);
       if (fresh) authConfig = { ...authConfig, ...fresh };
@@ -121,6 +128,7 @@ export class OAuth2TokenService {
       ? String(authConfig.clientSecret)
       : undefined;
     const scope = authConfig.scope ? String(authConfig.scope) : undefined;
+    const tokenAuthMethod = String(authConfig.tokenAuthMethod || 'body');
 
     if (!tokenUrl) {
       this.logger.warn('OAuth2 refresh: missing tokenUrl');
@@ -152,26 +160,20 @@ export class OAuth2TokenService {
       if (grant === 'client_credentials') {
         body = { grant_type: 'client_credentials' };
         if (scope) body.scope = scope;
-        const basic = Buffer.from(`${clientId}:${clientSecret}`).toString(
-          'base64',
+        headers.Authorization = buildBasicTokenAuthHeader(
+          clientId!,
+          clientSecret!,
         );
-        headers.Authorization = `Basic ${basic}`;
       } else {
         body = {
           grant_type: 'refresh_token',
           refresh_token: refreshToken,
         };
-        const useBasic =
-          authConfig.tokenAuthMethod === 'basic' ||
-          authConfig.tokenAuthMethod === 'client_secret_basic';
-        if (useBasic && clientId && clientSecret) {
-          // client_secret_basic — credentials in the Authorization header.
-          // DATEV and other confidential-client providers reject body creds.
-          if (clientId) body.client_id = clientId;
-          const basic = Buffer.from(`${clientId}:${clientSecret}`).toString(
-            'base64',
+        if (usesBasicTokenAuth(tokenAuthMethod) && clientId && clientSecret) {
+          headers.Authorization = buildBasicTokenAuthHeader(
+            clientId,
+            clientSecret,
           );
-          headers.Authorization = `Basic ${basic}`;
         } else {
           if (clientId) body.client_id = clientId;
           if (clientSecret) body.client_secret = clientSecret;
@@ -274,11 +276,6 @@ export class OAuth2TokenService {
    * Update the connector's encrypted authConfig with the new access token
    * so it survives server restarts.
    */
-  /**
-   * Reads and decrypts the connector's current authConfig straight from the DB.
-   * Used to obtain the freshest (possibly-rotated) refresh token, bypassing the
-   * stale in-memory registry snapshot. Returns null if unavailable.
-   */
   private async loadAuthConfigFromDb(
     connectorId: string,
   ): Promise<Record<string, unknown> | null> {
@@ -287,11 +284,13 @@ export class OAuth2TokenService {
         where: { id: connectorId },
         select: { authConfig: true },
       });
+
       if (!connector?.authConfig) return null;
+
       return JSON.parse(decrypt(connector.authConfig, this.encryptionKey));
     } catch (err: any) {
       this.logger.warn(
-        `OAuth2: failed to load fresh authConfig for ${connectorId}: ${err.message}`,
+        `OAuth2: failed to load fresh authConfig: ${err.message}`,
       );
       return null;
     }

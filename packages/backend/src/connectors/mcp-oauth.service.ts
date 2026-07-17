@@ -19,17 +19,20 @@ interface PendingOAuthFlow {
   redirectUri: string;
   clientId: string;
   clientSecret?: string;
-  tokenUrl: string;
-  /**
-   * How the client authenticates at the token endpoint:
-   *  - undefined / 'post' → client_id + client_secret in the request body
-   *    (RFC 6749 client_secret_post) — the historical default.
-   *  - 'basic'            → HTTP Basic Authorization header
-   *    (client_secret_basic). Required by providers like DATEV that reject
-   *    body credentials with 401 invalid_client.
-   */
   tokenAuthMethod?: string;
+  tokenUrl: string;
   createdAt: number;
+}
+
+function usesBasicTokenAuth(method?: string): boolean {
+  return method === 'basic' || method === 'client_secret_basic';
+}
+
+function buildBasicTokenAuthHeader(clientId: string, clientSecret: string): string {
+  // OAuth2 client_secret_basic uses form-encoding before base64 (RFC 6749 §2.3.1).
+  const user = encodeURIComponent(clientId);
+  const pass = encodeURIComponent(clientSecret);
+  return `Basic ${Buffer.from(`${user}:${pass}`).toString('base64')}`;
 }
 
 @Injectable()
@@ -159,46 +162,38 @@ export class McpOAuthService {
     redirectUri: string;
     clientId: string;
     clientSecret?: string;
-    codeVerifier: string;
     tokenAuthMethod?: string;
+    codeVerifier: string;
   }): Promise<{
     accessToken: string;
     refreshToken?: string;
     expiresIn?: number;
   }> {
-    const useBasic =
-      params.tokenAuthMethod === 'basic' ||
-      params.tokenAuthMethod === 'client_secret_basic';
-
+    const tokenAuthMethod = String(params.tokenAuthMethod || 'body');
     const body: Record<string, string> = {
       grant_type: 'authorization_code',
       code: params.code,
       redirect_uri: params.redirectUri,
-      client_id: params.clientId,
       code_verifier: params.codeVerifier,
     };
-
     const headers: Record<string, string> = {
       'Content-Type': 'application/x-www-form-urlencoded',
-      Accept: 'application/json',
+      'Accept': 'application/json',
     };
 
-    if (useBasic && params.clientSecret) {
-      // client_secret_basic (RFC 6749 §2.3.1): credentials go in the
-      // Authorization header, NOT the body. Providers like DATEV reject a
-      // body-supplied client_secret for confidential clients with 401.
-      const basic = Buffer.from(
-        `${params.clientId}:${params.clientSecret}`,
-      ).toString('base64');
-      headers.Authorization = `Basic ${basic}`;
-    } else if (params.clientSecret) {
-      // client_secret_post (default): credentials in the body.
+    if (usesBasicTokenAuth(tokenAuthMethod) && params.clientSecret) {
+      headers.Authorization = buildBasicTokenAuthHeader(
+        params.clientId,
+        params.clientSecret,
+      );
+    } else {
+      body.client_id = params.clientId;
+    }
+    if (!usesBasicTokenAuth(tokenAuthMethod) && params.clientSecret) {
       body.client_secret = params.clientSecret;
     }
 
-    this.logger.debug(
-      `Exchanging auth code at ${params.tokenUrl} (auth=${useBasic ? 'basic' : 'post'})`,
-    );
+    this.logger.debug(`Exchanging auth code at ${params.tokenUrl}`);
 
     await assertSafeOutboundUrl(params.tokenUrl);
     const response = await axios.post(

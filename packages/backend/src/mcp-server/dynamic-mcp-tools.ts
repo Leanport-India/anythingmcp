@@ -178,7 +178,7 @@ export class DynamicMcpTools {
       | undefined;
     const cacheTtl = responseMapping?.cacheTtl;
     if (cacheTtl && cacheTtl > 0) {
-      const cacheKey = this.buildCacheKey(toolName, params);
+      const cacheKey = this.buildCacheKey(toolName, params, tool.connectorId);
       const cached = await this.redisService.get(cacheKey);
       if (cached) {
         this.logger.debug(`Cache hit for tool ${toolName}`);
@@ -219,6 +219,7 @@ export class DynamicMcpTools {
           ? JSON.parse(tool.connectorConfig.authConfig)
           : undefined,
         headers: interpolatedConfig.headers,
+        connectorId: tool.connectorId,
         specUrl: (tool.connectorConfig as any).specUrl,
         ...(proxyUrl ? { proxyUrl } : {}),
       };
@@ -279,7 +280,7 @@ export class DynamicMcpTools {
 
       // Cache the response if cacheTtl is set
       if (cacheTtl && cacheTtl > 0) {
-        const cacheKey = this.buildCacheKey(toolName, params);
+        const cacheKey = this.buildCacheKey(toolName, params, tool.connectorId);
         await this.redisService.set(cacheKey, resultText, cacheTtl);
         this.logger.debug(
           `Cached response for tool ${toolName} (TTL: ${cacheTtl}s)`,
@@ -329,12 +330,13 @@ export class DynamicMcpTools {
   private buildCacheKey(
     toolName: string,
     params: Record<string, unknown>,
+    connectorId?: string,
   ): string {
     const paramsHash = createHash('md5')
       .update(JSON.stringify(params, Object.keys(params).sort()))
       .digest('hex')
       .slice(0, 12);
-    return `tool_cache:${toolName}:${paramsHash}`;
+    return `tool_cache:${connectorId || 'global'}:${toolName}:${paramsHash}`;
   }
 
   /**

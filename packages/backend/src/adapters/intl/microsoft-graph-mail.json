@@ -1,0 +1,203 @@
+{
+  "slug": "microsoft-graph-mail",
+  "name": "Microsoft Graph Mail",
+  "description": "Read Outlook/Microsoft 365 mail through Microsoft Graph: profile, messages, message details, search, and attachments. 6 tools, built-in OAuth2 auth.",
+  "instructions": "This connector uses Microsoft Graph API v1.0 mail endpoints with the built-in AnythingMCP OAuth2 authorization-code flow.\n\n**Setup**:\n1. Register an app in Microsoft Entra ID at https://portal.azure.com → **App registrations → New registration**.\n2. Add a Web redirect URI: `<your SERVER_URL>/api/mcp-oauth/callback` (for local Docker, usually `http://localhost:4000/api/mcp-oauth/callback`).\n3. Create a client secret under **Certificates & secrets**.\n4. Add Microsoft Graph delegated permissions: `User.Read`, `Mail.Read`, and `offline_access`. Grant admin consent if your tenant requires it.\n5. Set:\n   - `MICROSOFT_GRAPH_TENANT_ID` = your tenant ID, or `common` for multi-tenant/work-personal sign-in\n   - `MICROSOFT_GRAPH_CLIENT_ID` = app/client ID\n   - `MICROSOFT_GRAPH_CLIENT_SECRET` = client secret value\n6. Import this adapter, then run the one-time OAuth flow: `POST /api/connectors/{id}/oauth/authorize` → open the returned URL → sign in and consent. AnythingMCP stores the encrypted access/refresh tokens and refreshes them automatically.\n\n**Authentication**: OAuth2. Requests send `Authorization: Bearer <token>` automatically after the OAuth callback succeeds.\n\n**Mailbox scope**: these tools use `/me`, so delegated tokens read the signed-in user's mailbox. For shared mailboxes or app-only tenant access, create a dedicated connector variant using `/users/{userId}`.\n\n**Pagination**: list/search calls return OData `@odata.nextLink` when more results exist. Use `$top` to keep responses small.\n\n**Search**: `microsoft_graph_mail_search_emails` maps to Graph's `$search` query. Pass a Graph-compatible search string, usually quoted for plain text, for example `\"quarterly report\"`, or use property terms such as `from:alice@example.com subject:invoice`.\n\n**Attachments**: `microsoft_graph_mail_get_email_attachment` decodes Graph `contentBytes` server-side. PDFs are converted to extracted plain text when possible, text-like files are returned as text, images are returned as MCP image blocks, and other binaries are saved to disk with a file reference. Raw base64 is never returned in a text block.\n\n**Rate limits**: Microsoft Graph throttles per app, tenant, and mailbox. On 429 honor `Retry-After`.\n\n**Out of scope here**: sending mail, modifying mail, delta sync, subscriptions/webhooks, MIME `$value` downloads, shared mailbox `/users/{id}` operations.",
+  "region": "intl",
+  "category": "email",
+  "icon": "microsoft-graph",
+  "docsUrl": "https://learn.microsoft.com/en-us/graph/api/resources/mail-api-overview",
+  "requiredEnvVars": [
+    "MICROSOFT_GRAPH_TENANT_ID",
+    "MICROSOFT_GRAPH_CLIENT_ID",
+    "MICROSOFT_GRAPH_CLIENT_SECRET"
+  ],
+  "connector": {
+    "name": "Microsoft Graph (Mail)",
+    "type": "REST",
+    "baseUrl": "https://graph.microsoft.com/v1.0",
+    "authType": "OAUTH2",
+    "authConfig": {
+      "clientId": "{{MICROSOFT_GRAPH_CLIENT_ID}}",
+      "clientSecret": "{{MICROSOFT_GRAPH_CLIENT_SECRET}}",
+      "authorizationUrl": "https://login.microsoftonline.com/{{MICROSOFT_GRAPH_TENANT_ID}}/oauth2/v2.0/authorize",
+      "tokenUrl": "https://login.microsoftonline.com/{{MICROSOFT_GRAPH_TENANT_ID}}/oauth2/v2.0/token",
+      "tokenAuthMethod": "body",
+      "scopes": "offline_access User.Read Mail.Read"
+    }
+  },
+  "tools": [
+    {
+      "name": "microsoft_graph_mail_get_profile",
+      "description": "Get the signed-in Microsoft 365 user's profile: id, displayName, mail, userPrincipalName, jobTitle, mobilePhone, officeLocation, preferredLanguage.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      },
+      "endpointMapping": {
+        "method": "GET",
+        "path": "/me",
+        "queryParams": {
+          "$select": "id,displayName,mail,userPrincipalName,jobTitle,mobilePhone,officeLocation,preferredLanguage"
+        }
+      }
+    },
+    {
+      "name": "microsoft_graph_mail_read_emails",
+      "description": "List recent messages in the signed-in user's mailbox. Use $select to reduce payload size and $filter/$orderby for OData narrowing. When $select is omitted, Graph returns its default message projection.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "$top": {
+            "type": "integer",
+            "description": "Maximum messages to return in one page. Graph commonly supports up to 1000; 10-50 is recommended for agents."
+          },
+          "$select": {
+            "type": "string",
+            "description": "Comma-separated fields. Default includes id, subject, from, receivedDateTime, hasAttachments, isRead, importance, webLink, bodyPreview."
+          },
+          "$filter": {
+            "type": "string",
+            "description": "OData filter, e.g. receivedDateTime ge 2026-01-01T00:00:00Z or isRead eq false."
+          },
+          "$orderby": {
+            "type": "string",
+            "description": "OData order, e.g. receivedDateTime desc."
+          },
+          "$skip": {
+            "type": "integer",
+            "description": "Number of messages to skip for offset-style pagination when supported."
+          }
+        }
+      },
+      "endpointMapping": {
+        "method": "GET",
+        "path": "/me/messages",
+        "queryParams": {
+          "$top": "$$top",
+          "$select": "${$select}",
+          "$filter": "$$filter",
+          "$orderby": "$$orderby",
+          "$skip": "$$skip"
+        }
+      }
+    },
+    {
+      "name": "microsoft_graph_mail_get_email_details",
+      "description": "Get one email message by ID, including headers/body if requested via $select.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "messageId": {
+            "type": "string",
+            "description": "Microsoft Graph message ID."
+          },
+          "$select": {
+            "type": "string",
+            "description": "Comma-separated fields, e.g. id,subject,from,toRecipients,ccRecipients,receivedDateTime,body,bodyPreview,hasAttachments,internetMessageHeaders,webLink."
+          }
+        },
+        "required": [
+          "messageId"
+        ]
+      },
+      "endpointMapping": {
+        "method": "GET",
+        "path": "/me/messages/{messageId}",
+        "queryParams": {
+          "$select": "${$select}"
+        }
+      }
+    },
+    {
+      "name": "microsoft_graph_mail_search_emails",
+      "description": "Search mailbox messages with Microsoft Graph $search. Pass a Graph-compatible search string, e.g. \"\\\"quarterly report\\\"\" or \"from:alice@example.com subject:invoice\".",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "$search": {
+            "type": "string",
+            "description": "Graph search expression. Quote plain text terms, e.g. \"quarterly report\"."
+          },
+          "$top": {
+            "type": "integer",
+            "description": "Maximum messages to return in one page."
+          },
+          "$select": {
+            "type": "string",
+            "description": "Comma-separated fields to return."
+          }
+        },
+        "required": [
+          "$search"
+        ]
+      },
+      "endpointMapping": {
+        "method": "GET",
+        "path": "/me/messages",
+        "queryParams": {
+          "$search": "$$search",
+          "$top": "$$top",
+          "$select": "${$select}"
+        }
+      }
+    },
+    {
+      "name": "microsoft_graph_mail_list_email_attachments",
+      "description": "List attachment metadata for one email message. Any Graph contentBytes field is stripped before returning so raw base64 is not exposed as text.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "messageId": {
+            "type": "string",
+            "description": "Microsoft Graph message ID."
+          },
+          "$top": {
+            "type": "integer",
+            "description": "Maximum attachments to return in one page."
+          },
+          "$select": {
+            "type": "string",
+            "description": "Comma-separated attachment fields, e.g. id,name,contentType,size,isInline,lastModifiedDateTime."
+          }
+        },
+        "required": [
+          "messageId"
+        ]
+      },
+      "endpointMapping": {
+        "method": "GET",
+        "path": "/me/messages/{messageId}/attachments",
+        "queryParams": {
+          "$top": "$$top",
+          "$select": "${$select}"
+        }
+      }
+    },
+    {
+      "name": "microsoft_graph_mail_get_email_attachment",
+      "description": "Get one attachment by ID from an email message. The server decodes Graph contentBytes: PDFs become extracted text, text-like files become text, images become MCP image blocks, and other binaries are saved with a file reference.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "messageId": {
+            "type": "string",
+            "description": "Microsoft Graph message ID."
+          },
+          "attachmentId": {
+            "type": "string",
+            "description": "Attachment ID from microsoft_graph_mail_list_email_attachments."
+          }
+        },
+        "required": [
+          "messageId",
+          "attachmentId"
+        ]
+      },
+      "endpointMapping": {
+        "method": "GET",
+        "path": "/me/messages/{messageId}/attachments/{attachmentId}"
+      }
+    }
+  ]
+}

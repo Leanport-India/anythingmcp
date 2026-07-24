@@ -1,0 +1,6 @@
+{
+  "adapters": [
+    "packages/backend/src/adapters/intl/microsoft-graph-directory.json",
+    "packages/backend/src/adapters/intl/microsoft-graph-mail.json"
+  ]
+}

@@ -28,21 +28,21 @@ export class KgController {
   ) {}
 
   @Get()
-  @Roles('ADMIN', 'EDITOR')
+  @Roles('ADMIN')
   @ApiOperation({ summary: 'Get the knowledge graph for the current workspace' })
   async getGraph(@Req() req: any) {
     return this.kg.getGraph(req.user.organizationId, req.user.sub);
   }
 
   @Get('stats')
-  @Roles('ADMIN', 'EDITOR')
+  @Roles('ADMIN')
   @ApiOperation({ summary: 'Graph counts (nodes, edges, suggested)' })
   async stats(@Req() req: any) {
     return this.kg.stats(req.user.organizationId);
   }
 
   @Get('settings')
-  @Roles('ADMIN', 'EDITOR')
+  @Roles('ADMIN')
   @ApiOperation({ summary: 'Whether the knowledge graph is enabled for this workspace' })
   async getSettings(@Req() req: any) {
     return this.kg.getSettings(req.user.organizationId);
@@ -74,7 +74,7 @@ export class KgController {
   }
 
   @Get('skills')
-  @Roles('ADMIN', 'EDITOR')
+  @Roles('ADMIN')
   @ApiOperation({ summary: 'List skill suggestions (filterable + paginated) with per-status counts' })
   async listSkills(
     @Req() req: any,

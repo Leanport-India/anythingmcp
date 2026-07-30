@@ -9,9 +9,11 @@ import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { StatusPill } from '@/components/ui/badge';
 import { AppSelect } from '@/components/ui/select';
+import { AccessDenied } from '@/components/access-denied';
+import { getCapabilities } from '@/lib/capabilities';
 
 export default function McpServerListPage() {
-  const { token } = useAuth();
+  const { token, user, isLoading: authLoading } = useAuth();
   const router = useRouter();
   const [servers, setServers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -22,11 +24,15 @@ export default function McpServerListPage() {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('');
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const capabilities = getCapabilities(user);
 
   useEffect(() => {
-    if (!token) return;
+    if (!token || !capabilities.canManageMcpServers) return;
     mcpServers.list(token).then(setServers).catch(() => {}).finally(() => setLoading(false));
-  }, [token]);
+  }, [token, capabilities.canManageMcpServers]);
+
+  if (authLoading) return null;
+  if (!capabilities.canManageMcpServers) return <AccessDenied />;
 
   const handleCreate = async () => {
     if (!token || !newName.trim()) return;

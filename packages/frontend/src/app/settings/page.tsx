@@ -8,6 +8,7 @@ import { useToast } from '@/components/toast';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { StatusPill } from '@/components/ui/badge';
+import { getCapabilities } from '@/lib/capabilities';
 
 const AUTH_MODE_LABELS: Record<string, string> = {
   none: 'None (not recommended)',
@@ -20,6 +21,7 @@ export default function SettingsPage() {
   const toast = useToast();
 
   const { token, user, updateUser, logout } = useAuth();
+  const capabilities = getCapabilities(user);
   const [profileName, setProfileName] = useState(user?.name || '');
   const [profileMsg, setProfileMsg] = useState('');
   // Change password
@@ -41,12 +43,13 @@ export default function SettingsPage() {
 
   // Load server info
   useEffect(() => {
+    if (!capabilities.canManageMcpServers) return;
     server.info().then((info) => {
       setMcpAuthMode(info.mcpAuthMode);
       setOauthEndpoints(info.oauthEndpoints);
       setServerUrl(info.serverUrl);
     }).catch(() => {});
-  }, []);
+  }, [capabilities.canManageMcpServers]);
 
   const handleSaveProfile = async () => {
     if (!token) return;
@@ -214,12 +217,14 @@ export default function SettingsPage() {
         </div>
       </Card>
 
-      {/* MCP Auth */}
-      <Card className="p-[22px]">
-        <h3 className="text-sm font-semibold text-[var(--text)] mb-2">MCP Server Authentication</h3>
-        <p className="text-sm text-[var(--text-2)] mb-4">
-          Configure how MCP clients (Claude, ChatGPT, Cursor) authenticate to your server.
-        </p>
+      {capabilities.canManageMcpServers && (
+        <>
+          {/* MCP Auth */}
+          <Card className="p-[22px]">
+            <h3 className="text-sm font-semibold text-[var(--text)] mb-2">MCP Server Authentication</h3>
+            <p className="text-sm text-[var(--text-2)] mb-4">
+              Configure how MCP clients (Claude, ChatGPT, Cursor) authenticate to your server.
+            </p>
         <div className="space-y-4 max-w-lg">
           <div>
             <label className={labelClass}>Auth Method</label>
@@ -269,17 +274,19 @@ export default function SettingsPage() {
             Set it to <code className="bg-[var(--surface-3)] px-1 rounded font-mono">oauth2</code>, <code className="bg-[var(--surface-3)] px-1 rounded font-mono">legacy</code>, <code className="bg-[var(--surface-3)] px-1 rounded font-mono">both</code>, or <code className="bg-[var(--surface-3)] px-1 rounded font-mono">none</code>.
           </p>
         </div>
-      </Card>
+          </Card>
 
-      {/* MCP API Keys note */}
-      <Card className="p-[22px]">
-        <h3 className="text-sm font-semibold text-[var(--text)] mb-2">MCP API Keys</h3>
-        <p className="text-sm text-[var(--text-2)]">
-          API keys are now managed per MCP server. Go to{' '}
-          <a href="/mcp-server" className="text-[var(--brand)] hover:underline">MCP Servers</a>{' '}
-          to generate and manage keys for each server.
-        </p>
-      </Card>
+          {/* MCP API Keys note */}
+          <Card className="p-[22px]">
+            <h3 className="text-sm font-semibold text-[var(--text)] mb-2">MCP API Keys</h3>
+            <p className="text-sm text-[var(--text-2)]">
+              API keys are now managed per MCP server. Go to{' '}
+              <a href="/mcp-server" className="text-[var(--brand)] hover:underline">MCP Servers</a>{' '}
+              to generate and manage keys for each server.
+            </p>
+          </Card>
+        </>
+      )}
 
       {/* Danger Zone */}
       <Card className="p-[22px] border-[var(--danger)]/30 bg-[var(--t-danger-bg)]">

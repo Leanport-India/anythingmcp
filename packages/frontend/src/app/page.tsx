@@ -8,6 +8,8 @@ import { AppShell } from '@/components/app-shell';
 import { Card } from '@/components/ui/card';
 import { StatCard } from '@/components/ui/stat-card';
 import { Button } from '@/components/ui/button';
+import { AccessDenied } from '@/components/access-denied';
+import { getCapabilities } from '@/lib/capabilities';
 
 type HealthResult = { total: number; healthy: number; unhealthy: number; connectors: any[] } | null;
 
@@ -21,6 +23,7 @@ interface AnalyticsData {
 
 export default function DashboardPage() {
   const { token, user, isLoading } = useAuth();
+  const capabilities = getCapabilities(user);
   const [stats, setStats] = useState({ connectors: 0, tools: 0, invocations24h: 0, errors24h: 0 });
   const [recentConnectors, setRecentConnectors] = useState<any[]>([]);
   const [analytics, setAnalytics] = useState<AnalyticsData | null>(null);
@@ -30,7 +33,7 @@ export default function DashboardPage() {
   const [kgStats, setKgStats] = useState<{ nodes: number; edges: number } | null>(null);
 
   useEffect(() => {
-    if (!token) return;
+    if (!token || !capabilities.canViewDashboard) return;
     const load = async () => {
       try {
         const [connList, auditStats, analyticsData] = await Promise.all([
@@ -61,7 +64,7 @@ export default function DashboardPage() {
       }
     };
     load();
-  }, [token]);
+  }, [token, capabilities.canViewDashboard]);
 
   const handleHealthCheck = async () => {
     if (!token) return;
@@ -74,6 +77,14 @@ export default function DashboardPage() {
   };
 
   if (isLoading) return null;
+  if (!capabilities.canViewDashboard) {
+    return (
+      <AccessDenied
+        title="Profile"
+        message="Your account is restricted to personal settings. Assigned connector authorization will appear in a dedicated My Connections area."
+      />
+    );
+  }
 
   const apiUrl = typeof window !== 'undefined'
     ? window.location.hostname === 'localhost'

@@ -12,6 +12,7 @@ import { ApiTags, ApiBearerAuth, ApiOperation, ApiProperty, ApiPropertyOptional 
 import { AuthGuard } from '@nestjs/passport';
 import { IsString, IsOptional } from 'class-validator';
 import { McpApiKeysService } from './mcp-api-keys.service';
+import { assertAdmin } from '../auth/capabilities';
 
 class CreateKeyDto {
   @ApiProperty({
@@ -40,6 +41,7 @@ export class McpApiKeysController {
   @Get()
   @ApiOperation({ summary: 'List my MCP API keys' })
   async listKeys(@Req() req: any) {
+    assertAdmin(req.user, 'Only administrators can manage MCP API keys');
     const keys = await this.keysService.listByUser(req.user.sub);
     // Mask keys for display: show only last 8 chars
     return keys.map((k) => ({
@@ -51,6 +53,7 @@ export class McpApiKeysController {
   @Post()
   @ApiOperation({ summary: 'Generate a new MCP API key' })
   async generateKey(@Req() req: any, @Body() dto: CreateKeyDto) {
+    assertAdmin(req.user, 'Only administrators can manage MCP API keys');
     // Returns the full key — user must save it, it won't be shown again
     return this.keysService.generate(req.user.sub, req.user.organizationId, dto.name, dto.mcpServerId);
   }
@@ -58,6 +61,7 @@ export class McpApiKeysController {
   @Post(':id/revoke')
   @ApiOperation({ summary: 'Revoke (deactivate) an MCP API key' })
   async revokeKey(@Req() req: any, @Param('id') id: string) {
+    assertAdmin(req.user, 'Only administrators can manage MCP API keys');
     await this.keysService.revoke(id, req.user.sub);
     return { message: 'Key revoked' };
   }
@@ -65,6 +69,7 @@ export class McpApiKeysController {
   @Delete(':id')
   @ApiOperation({ summary: 'Delete an MCP API key' })
   async deleteKey(@Req() req: any, @Param('id') id: string) {
+    assertAdmin(req.user, 'Only administrators can manage MCP API keys');
     await this.keysService.deleteKey(id, req.user.sub);
     return { message: 'Key deleted' };
   }

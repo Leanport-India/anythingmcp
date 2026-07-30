@@ -14,6 +14,8 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Badge, StatusPill } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
+import { AccessDenied } from '@/components/access-denied';
+import { getCapabilities } from '@/lib/capabilities';
 
 const IMPORT_SOURCES = [
   { id: 'openapi', label: 'OpenAPI / Swagger', placeholder: 'Paste OpenAPI JSON/YAML or enter URL...' },
@@ -28,7 +30,7 @@ const IMPORT_SOURCES = [
 const EDIT_DEFAULT_LOGIN_BODY = '{\n  "username": "${username}",\n  "password": "${password}"\n}';
 
 export default function ConnectorDetailPage() {
-  const { token } = useAuth();
+  const { token, user, isLoading: authLoading } = useAuth();
   const params = useParams();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -98,6 +100,7 @@ export default function ConnectorDetailPage() {
   const [showEnvVars, setShowEnvVars] = useState(false);
   const [envVarEntries, setEnvVarEntries] = useState<{ key: string; value: string }[]>([]);
   const [savingEnvVars, setSavingEnvVars] = useState(false);
+  const capabilities = getCapabilities(user);
 
   const fetchConnector = async () => {
     if (!token) return;
@@ -154,8 +157,8 @@ export default function ConnectorDetailPage() {
       window.history.replaceState({}, '', `/connectors/${id}`);
     }
 
-    fetchConnector();
-  }, [token, id]);
+    if (capabilities.canManageConnectors) fetchConnector();
+  }, [token, id, capabilities.canManageConnectors]);
 
   const buildAuthConfig = () => {
     // Only send authConfig if the user filled in credential fields;
@@ -482,6 +485,9 @@ export default function ConnectorDetailPage() {
     }
   };
 
+
+  if (authLoading) return null;
+  if (!capabilities.canManageConnectors) return <AccessDenied />;
 
   if (loading) {
     return (

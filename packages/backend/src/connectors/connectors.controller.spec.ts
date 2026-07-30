@@ -49,11 +49,11 @@ const req = (role: string) => ({
 
 describe('ConnectorsController role enforcement', () => {
   describe('POST /api/connectors (create)', () => {
-    it('rejects VIEWER before creating the connector', async () => {
+    it.each(['EDITOR', 'VIEWER'])('rejects %s before creating the connector', async (role) => {
       const { controller, connectorsService, licenseGuard } = buildController();
 
       await expect(
-        controller.create(req('VIEWER'), {
+        controller.create(req(role), {
           name: 'viewer-created-test',
           type: 'REST' as any,
           baseUrl: 'https://example.invalid',
@@ -64,10 +64,10 @@ describe('ConnectorsController role enforcement', () => {
       expect(connectorsService.create).not.toHaveBeenCalled();
     });
 
-    it.each(['EDITOR', 'ADMIN'])('allows %s to create a connector', async (role) => {
+    it('allows ADMIN to create a connector', async () => {
       const { controller, connectorsService } = buildController();
 
-      await controller.create(req(role), {
+      await controller.create(req('ADMIN'), {
         name: 'ok',
         type: 'REST' as any,
         baseUrl: 'https://example.invalid',
@@ -78,11 +78,11 @@ describe('ConnectorsController role enforcement', () => {
   });
 
   describe('POST /api/connectors/import-all (importAll)', () => {
-    it('rejects VIEWER before importing any connector', async () => {
+    it.each(['EDITOR', 'VIEWER'])('rejects %s before importing any connector', async (role) => {
       const { controller, prisma } = buildController();
 
       await expect(
-        controller.importAll(req('VIEWER'), {
+        controller.importAll(req(role), {
           connectors: [
             {
               name: 'viewer-imported-test',
@@ -96,10 +96,10 @@ describe('ConnectorsController role enforcement', () => {
       expect(prisma.connector.create).not.toHaveBeenCalled();
     });
 
-    it.each(['EDITOR', 'ADMIN'])('allows %s to import connectors', async (role) => {
+    it('allows ADMIN to import connectors', async () => {
       const { controller, prisma } = buildController();
 
-      await controller.importAll(req(role), {
+      await controller.importAll(req('ADMIN'), {
         connectors: [
           {
             name: 'imported',

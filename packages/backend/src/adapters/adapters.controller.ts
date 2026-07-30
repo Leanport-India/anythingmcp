@@ -6,12 +6,12 @@ import {
   Body,
   Req,
   UseGuards,
-  ForbiddenException,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { AuthGuard } from '@nestjs/passport';
 import { AdaptersService } from './adapters.service';
 import { LicenseGuardService } from '../license/license-guard.service';
+import { assertAdmin } from '../auth/capabilities';
 
 // Public endpoints (no auth required) — used by the marketing website
 @ApiTags('Adapters')
@@ -47,7 +47,8 @@ export class AdaptersController {
     description:
       'Returns the full adapter definition with connector config and all tool mappings.',
   })
-  getBySlug(@Param('slug') slug: string) {
+  getBySlug(@Req() req: any, @Param('slug') slug: string) {
+    assertAdmin(req.user, 'Only administrators can view adapter details');
     return this.adaptersService.getBySlug(slug);
   }
 
@@ -63,9 +64,7 @@ export class AdaptersController {
     @Param('slug') slug: string,
     @Body() body: { credentials?: Record<string, string> },
   ) {
-    if (req.user.role === 'VIEWER') {
-      throw new ForbiddenException('Viewers cannot modify connectors');
-    }
+    assertAdmin(req.user, 'Only administrators can import adapters');
     await this.licenseGuard.checkCanCreateConnector(req.user.sub, req.user.organizationId);
     const result = await this.adaptersService.importAdapter(
       slug,

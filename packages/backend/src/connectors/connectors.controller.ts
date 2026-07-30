@@ -44,6 +44,7 @@ import { LicenseGuardService } from '../license/license-guard.service';
 import { getRequiredSecret } from '../common/secrets.util';
 import { decrypt } from '../common/crypto/encryption.util';
 import { getAdapter } from '../adapters/catalog';
+import { assertAdmin } from '../auth/capabilities';
 import {
   interpolateDeep,
   interpolateString,
@@ -411,19 +412,12 @@ export class ConnectorsController {
   }
 
   private assertCanCreate(req: any) {
-    if (req.user.role === 'VIEWER') {
-      throw new ForbiddenException('Viewers cannot modify connectors');
-    }
+    assertAdmin(req.user, 'Only administrators can manage connectors');
   }
 
   private assertCanWrite(connector: any, req: any) {
     this.assertOrgMatch(connector, req);
-    if (req.user.role === 'VIEWER') {
-      throw new ForbiddenException('Viewers cannot modify connectors');
-    }
-    if (connector.userId !== req.user.sub && req.user.role !== 'ADMIN') {
-      throw new ForbiddenException('Only the connector owner or an admin can modify this connector');
-    }
+    assertAdmin(req.user, 'Only administrators can manage connectors');
   }
 
   @Get()
@@ -431,6 +425,7 @@ export class ConnectorsController {
   @ApiQuery({ name: 'limit', required: false, type: Number, description: '1..200' })
   @ApiQuery({ name: 'offset', required: false, type: Number })
   async list(@Req() req: any, @Query() pagination: PaginationQueryDto) {
+    assertAdmin(req.user, 'Only administrators can view connector configuration');
     return this.connectorsService.findByOrg(req.user.organizationId, {
       limit: pagination.limit,
       offset: pagination.offset,
@@ -510,7 +505,8 @@ export class ConnectorsController {
       'Returns { available: true } only when CONNECTOR_PROXY_URL is set. ' +
       'The UI uses this to show or hide the per-tool "Use proxy" checkbox.',
   })
-  async proxyAvailability() {
+  async proxyAvailability(@Req() req: any) {
+    assertAdmin(req.user, 'Only administrators can view connector configuration');
     return { available: !!process.env.CONNECTOR_PROXY_URL };
   }
 
@@ -521,6 +517,7 @@ export class ConnectorsController {
       'Runs a health check against all active connectors and returns their status.',
   })
   async healthCheck(@Req() req: any) {
+    assertAdmin(req.user, 'Only administrators can run connector health checks');
     const allConnectors = await this.connectorsService.findByOrg(req.user.organizationId);
     const active = allConnectors.filter((c) => c.isActive);
 
@@ -572,6 +569,7 @@ export class ConnectorsController {
       'and configuration. Auth credentials are excluded for security.',
   })
   async exportAll(@Req() req: any) {
+    assertAdmin(req.user, 'Only administrators can export connector configuration');
     const allConnectors = await this.prisma.connector.findMany({
       where: { organizationId: req.user.organizationId },
       include: { tools: true },
@@ -727,9 +725,6 @@ export class ConnectorsController {
         clientSecret,
         tokenAuthMethod,
         tokenUrl: tokenEndpoint,
-        tokenAuthMethod: authConfig.tokenAuthMethod
-          ? String(authConfig.tokenAuthMethod)
-          : undefined,
         createdAt: Date.now(),
       });
 

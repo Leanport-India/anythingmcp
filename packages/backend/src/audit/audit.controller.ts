@@ -2,6 +2,7 @@ import { Controller, Get, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation, ApiQuery } from '@nestjs/swagger';
 import { AuthGuard } from '@nestjs/passport';
 import { AuditService } from './audit.service';
+import { assertAdmin } from '../auth/capabilities';
 
 @ApiTags('Audit')
 @ApiBearerAuth()
@@ -29,6 +30,7 @@ export class AuditController {
     @Query('connectorId') connectorId?: string,
     @Query('mcpServerId') mcpServerId?: string,
   ) {
+    assertAdmin(req.user, 'Only administrators can view audit logs');
     return this.auditService.getRecentInvocations(
       limit ? parseInt(limit, 10) : 100,
       offset ? parseInt(offset, 10) : 0,
@@ -39,6 +41,7 @@ export class AuditController {
   @Get('stats')
   @ApiOperation({ summary: 'Get invocation statistics' })
   async getStats(@Req() req: any) {
+    assertAdmin(req.user, 'Only administrators can view audit statistics');
     return this.auditService.getStats(req.user.organizationId);
   }
 
@@ -51,6 +54,7 @@ export class AuditController {
   })
   @ApiQuery({ name: 'days', required: false, type: Number })
   async getAnalytics(@Req() req: any, @Query('days') days?: string) {
+    assertAdmin(req.user, 'Only administrators can view analytics');
     return this.auditService.getAnalytics(
       req.user.organizationId,
       days ? parseInt(days, 10) : 7,
@@ -67,6 +71,7 @@ export class AuditController {
   })
   @ApiQuery({ name: 'days', required: false, type: Number })
   async getBreakdowns(@Req() req: any, @Query('days') days?: string) {
+    assertAdmin(req.user, 'Only administrators can view analytics');
     return this.auditService.getBreakdowns(
       req.user.organizationId,
       days ? parseInt(days, 10) : 30,

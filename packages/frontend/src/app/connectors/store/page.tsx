@@ -13,6 +13,8 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { McpAssignModal } from '@/components/mcp-assign-modal';
+import { AccessDenied } from '@/components/access-denied';
+import { getCapabilities } from '@/lib/capabilities';
 
 const REGION_LABELS: Record<string, string> = {
   de: 'Germany',
@@ -175,7 +177,8 @@ export default function AdapterStorePage() {
 }
 
 function AdapterStoreContent() {
-  const { token } = useAuth();
+  const { token, user, isLoading: authLoading } = useAuth();
+  const capabilities = getCapabilities(user);
   const router = useRouter();
   const searchParams = useSearchParams();
   const [list, setList] = useState<AdapterItem[]>([]);
@@ -201,13 +204,13 @@ function AdapterStoreContent() {
   const autoInstallTriggered = useRef(false);
 
   useEffect(() => {
-    if (!token) return;
+    if (!token || !capabilities.canManageConnectors) return;
     adapters
       .list(token)
       .then(setList)
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, [token]);
+  }, [token, capabilities.canManageConnectors]);
 
   const doImport = async (slug: string, credentials?: Record<string, string>) => {
     if (!token) return;
@@ -258,6 +261,7 @@ function AdapterStoreContent() {
 
   // Auto-import when ?install=<slug> is present (e.g. from website marketplace)
   useEffect(() => {
+    if (!capabilities.canManageConnectors) return;
     if (autoInstallTriggered.current || loading || !token || list.length === 0) return;
     const installSlug = searchParams.get('install');
     if (!installSlug) return;
@@ -265,7 +269,7 @@ function AdapterStoreContent() {
     if (!adapter) return;
     autoInstallTriggered.current = true;
     handleImportClick(adapter);
-  }, [loading, list, token, searchParams]);
+  }, [loading, list, token, searchParams, capabilities.canManageConnectors]);
 
   const handleConfigSubmit = () => {
     if (!configAdapter) return;
@@ -287,6 +291,9 @@ function AdapterStoreContent() {
       a.region?.toLowerCase().includes(q)
     );
   });
+
+  if (authLoading) return null;
+  if (!capabilities.canManageConnectors) return <AccessDenied />;
 
   return (
     <AppShell

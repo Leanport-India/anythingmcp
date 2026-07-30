@@ -9,6 +9,8 @@ import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { StatusPill, type Tone } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
+import { AccessDenied } from '@/components/access-denied';
+import { getCapabilities } from '@/lib/capabilities';
 
 const PAGE_SIZE = 50;
 
@@ -81,7 +83,8 @@ function UserCell({ log }: { log: any }) {
 }
 
 export default function LogsPage() {
-  const { token } = useAuth();
+  const { token, user, isLoading: authLoading } = useAuth();
+  const capabilities = getCapabilities(user);
   const [logs, setLogs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState<string>('');
@@ -108,13 +111,13 @@ export default function LogsPage() {
 
   // Load connectors and MCP servers for filter dropdowns
   useEffect(() => {
-    if (!token) return;
+    if (!token || !capabilities.canViewAudit) return;
     connectorsApi.list(token).then(setConnectors).catch(() => {});
     mcpServers.list(token).then(setServers).catch(() => {});
-  }, [token]);
+  }, [token, capabilities.canViewAudit]);
 
   const fetchLogs = useCallback(() => {
-    if (!token) return;
+    if (!token || !capabilities.canViewAudit) return;
     setLoading(true);
     audit
       .invocations(token, {
@@ -131,7 +134,7 @@ export default function LogsPage() {
       })
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, [token, page, statusFilter, debouncedSearch, connectorFilter, mcpServerFilter]);
+  }, [token, capabilities.canViewAudit, page, statusFilter, debouncedSearch, connectorFilter, mcpServerFilter]);
 
   // Load logs
   useEffect(() => {
@@ -179,6 +182,9 @@ export default function LogsPage() {
       Refresh
     </Button>
   );
+
+  if (authLoading) return null;
+  if (!capabilities.canViewAudit) return <AccessDenied />;
 
   return (
     <AppShell

@@ -7,6 +7,8 @@ import { AppShell } from '@/components/app-shell';
 import { Card } from '@/components/ui/card';
 import { StatCard } from '@/components/ui/stat-card';
 import { cn } from '@/lib/utils';
+import { AccessDenied } from '@/components/access-denied';
+import { getCapabilities } from '@/lib/capabilities';
 
 type Analytics = Awaited<ReturnType<typeof audit.analytics>>;
 
@@ -17,7 +19,8 @@ const RANGES = [
 ];
 
 export default function AnalyticsPage() {
-  const { token } = useAuth();
+  const { token, user, isLoading: authLoading } = useAuth();
+  const capabilities = getCapabilities(user);
   const [days, setDays] = useState(30);
   const [bd, setBd] = useState<AuditBreakdowns | null>(null);
   const [an, setAn] = useState<Analytics | null>(null);
@@ -25,7 +28,7 @@ export default function AnalyticsPage() {
   const [error, setError] = useState('');
 
   const load = useCallback(() => {
-    if (!token) return;
+    if (!token || !capabilities.canViewAnalytics) return;
     setLoading(true);
     Promise.all([audit.breakdowns(token, days), audit.analytics(token, days)])
       .then(([b, a]) => {
@@ -34,13 +37,16 @@ export default function AnalyticsPage() {
       })
       .catch((e) => setError(e.message || 'Failed to load'))
       .finally(() => setLoading(false));
-  }, [token, days]);
+  }, [token, days, capabilities.canViewAnalytics]);
 
   useEffect(() => load(), [load]);
 
   const hasRates = !!bd && (bd.rates.callMicros > 0 || bd.rates.proxyCallMicros > 0);
   const successRate =
     bd && bd.total > 0 ? Math.round(((bd.total - bd.errors) / bd.total) * 100) : null;
+
+  if (authLoading) return null;
+  if (!capabilities.canViewAnalytics) return <AccessDenied />;
 
   return (
     <AppShell

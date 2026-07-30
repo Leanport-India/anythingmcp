@@ -10,6 +10,8 @@ import { McpAssignModal } from '@/components/mcp-assign-modal';
 import { AppSelect } from '@/components/ui/select';
 import { HeadersEditor, headerRowsToObject, type HeaderRow } from '@/components/headers-editor';
 import { cn } from '@/lib/utils';
+import { AccessDenied } from '@/components/access-denied';
+import { getCapabilities } from '@/lib/capabilities';
 
 const DEFAULT_LOGIN_BODY = '{\n  "username": "${username}",\n  "password": "${password}"\n}';
 
@@ -34,7 +36,7 @@ const TYPE_ICONS: Record<string, React.ReactNode> = {
 };
 
 export default function NewConnectorPage() {
-  const { token } = useAuth();
+  const { token, user, isLoading: authLoading } = useAuth();
   const router = useRouter();
   const [selectedType, setSelectedType] = useState<string | null>(null);
   const [name, setName] = useState('');
@@ -69,6 +71,9 @@ export default function NewConnectorPage() {
     suggestedFix?: { action: string; hostname?: string; url?: string };
   } | null>(null);
   const [createdConnector, setCreatedConnector] = useState<{ id: string; name: string } | null>(null);
+
+  if (authLoading) return null;
+  if (!getCapabilities(user).canManageConnectors) return <AccessDenied />;
 
   const buildAuthConfig = () => {
     switch (authType) {

@@ -3,7 +3,6 @@ import * as billbee from './de/billbee.json';
 import * as billomat from './de/billomat.json';
 import * as bundesbank from './de/bundesbank.json';
 import * as datev from './de/datev.json';
-import * as datevSandbox from './de/datev-sandbox.json';
 import * as destatisGenesis from './de/destatis-genesis.json';
 import * as deutscheBahn from './de/deutsche-bahn.json';
 import * as dhlTracking from './de/dhl-tracking.json';
@@ -118,8 +117,6 @@ import * as mastodon from './intl/mastodon.json';
 import * as medium from './intl/medium.json';
 import * as messagebird from './intl/messagebird.json';
 import * as microsoftBookings from './intl/microsoft-bookings.json';
-import * as microsoftGraphDirectory from './intl/microsoft-graph-directory.json';
-import * as microsoftGraphMail from './intl/microsoft-graph-mail.json';
 import * as microsoftTeams from './intl/microsoft-teams.json';
 import * as mintlify from './intl/mintlify.json';
 import * as mollie from './intl/mollie.json';
@@ -286,7 +283,6 @@ const RAW_ADAPTERS: AdapterDefinition[] = [
   billomat as unknown as AdapterDefinition,
   bundesbank as unknown as AdapterDefinition,
   datev as unknown as AdapterDefinition,
-  datevSandbox as unknown as AdapterDefinition,
   destatisGenesis as unknown as AdapterDefinition,
   deutscheBahn as unknown as AdapterDefinition,
   dhlTracking as unknown as AdapterDefinition,
@@ -401,8 +397,6 @@ const RAW_ADAPTERS: AdapterDefinition[] = [
   medium as unknown as AdapterDefinition,
   messagebird as unknown as AdapterDefinition,
   microsoftBookings as unknown as AdapterDefinition,
-  microsoftGraphDirectory as unknown as AdapterDefinition,
-  microsoftGraphMail as unknown as AdapterDefinition,
   microsoftTeams as unknown as AdapterDefinition,
   mintlify as unknown as AdapterDefinition,
   mollie as unknown as AdapterDefinition,

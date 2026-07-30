@@ -27,6 +27,7 @@ import { McpServerService } from '../mcp-server/mcp-server.service';
 import { ConnectorsService } from './connectors.service';
 import { inferJsonSchema } from './output-schema.util';
 import { classifyToolExecutionError } from './connector-error.util';
+import { assertAdmin } from '../auth/capabilities';
 
 class CreateToolDto {
   @ApiProperty({
@@ -187,18 +188,14 @@ export class ToolsController {
 
   private async assertCanWriteConnector(connectorId: string, req: any) {
     const connector = await this.assertConnectorOrgMatch(connectorId, req);
-    if (req.user.role === 'VIEWER') {
-      throw new ForbiddenException('Viewers cannot modify tools');
-    }
-    if (connector.userId !== req.user.sub && req.user.role !== 'ADMIN') {
-      throw new ForbiddenException('Only the connector owner or an admin can modify this resource');
-    }
+    assertAdmin(req.user, 'Only administrators can manage connector tools');
   }
 
   @Get()
   @ApiOperation({ summary: 'List tools for a connector' })
   async list(@Req() req: any, @Param('connectorId') connectorId: string) {
     await this.assertConnectorOrgMatch(connectorId, req);
+    assertAdmin(req.user, 'Only administrators can view connector tools');
     return this.prisma.mcpTool.findMany({
       where: { connectorId },
       orderBy: { createdAt: 'desc' },

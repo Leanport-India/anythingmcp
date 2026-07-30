@@ -23,21 +23,21 @@ const req = (role: string) => ({
 
 describe('AdaptersController role enforcement', () => {
   describe('POST /api/adapters/:slug/import (importAdapter)', () => {
-    it('rejects VIEWER before importing the adapter', async () => {
+    it.each(['EDITOR', 'VIEWER'])('rejects %s before importing the adapter', async (role) => {
       const { controller, adaptersService, licenseGuard } = buildController();
 
       await expect(
-        controller.importAdapter(req('VIEWER'), 'some-slug', {}),
+        controller.importAdapter(req(role), 'some-slug', {}),
       ).rejects.toThrow(ForbiddenException);
 
       expect(licenseGuard.checkCanCreateConnector).not.toHaveBeenCalled();
       expect(adaptersService.importAdapter).not.toHaveBeenCalled();
     });
 
-    it.each(['EDITOR', 'ADMIN'])('allows %s to import an adapter', async (role) => {
+    it('allows ADMIN to import an adapter', async () => {
       const { controller, adaptersService } = buildController();
 
-      await controller.importAdapter(req(role), 'some-slug', {});
+      await controller.importAdapter(req('ADMIN'), 'some-slug', {});
 
       expect(adaptersService.importAdapter).toHaveBeenCalledTimes(1);
     });

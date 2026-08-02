@@ -28,6 +28,10 @@ export interface RegisteredTool {
     baseUrl: string;
     authType: string;
     authConfig?: string; // decrypted JSON string
+    // SHARED (default): authConfig above is the credential for every caller.
+    // PER_USER: authConfig is ignored at call time — the executor must look
+    // up the calling user's own credential instead (see DynamicMcpTools).
+    authMode?: 'SHARED' | 'PER_USER';
     headers?: Record<string, string>;
     envVars?: Record<string, string>; // runtime environment variables
     config?: Record<string, unknown>; // connector-specific settings (e.g. readOnly for DATABASE)

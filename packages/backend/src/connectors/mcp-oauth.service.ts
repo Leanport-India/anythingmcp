@@ -22,6 +22,9 @@ interface PendingOAuthFlow {
   tokenAuthMethod?: string;
   tokenUrl: string;
   createdAt: number;
+  // When true, the resulting token belongs to `userId` alone (stored in
+  // UserConnectorAuthorization) instead of the connector's shared authConfig.
+  perUser?: boolean;
 }
 
 function usesBasicTokenAuth(method?: string): boolean {

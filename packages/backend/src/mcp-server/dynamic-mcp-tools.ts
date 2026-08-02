@@ -15,6 +15,7 @@ import { PrismaService } from '../common/prisma.service';
 import { interpolateConnectorConfig } from '../common/env-interpolation.util';
 import { resolveInternalDbRestUrl } from '../common/db-rest.util';
 import { KgService } from '../knowledge-graph/kg.service';
+import { ConnectorAuthorizationsService } from '../connectors/connector-authorizations.service';
 import type { RegisteredTool } from './tool-registry';
 
 /**
@@ -40,6 +41,7 @@ export class DynamicMcpTools {
     private readonly mcpClientEngine: McpClientEngine,
     private readonly databaseEngine: DatabaseEngine,
     private readonly kgService: KgService,
+    private readonly connectorAuth: ConnectorAuthorizationsService,
   ) {}
 
   /**
@@ -212,14 +214,45 @@ export class DynamicMcpTools {
       const proxyUrl = await this.resolveProxy(tool, context?.organizationId);
       usedProxy = proxyUrl != null;
 
+      // PER_USER connectors never use the connector's own authConfig at call
+      // time — each caller must have completed their own OAuth grant, stored
+      // in UserConnectorAuthorization. This is what keeps one user's Graph
+      // Mail (etc.) data from ever being reachable by another user's calls.
+      let resolvedAuthConfig: Record<string, unknown> | undefined =
+        tool.connectorConfig.authConfig
+          ? JSON.parse(tool.connectorConfig.authConfig)
+          : undefined;
+
+      if (tool.connectorConfig.authMode === 'PER_USER') {
+        if (!context?.userId) {
+          throw new Error(
+            'This tool requires a personally-authorized connection. Sign in and authorize it from My Connections before calling this tool.',
+          );
+        }
+        const userCredential = await this.connectorAuth.getUserCredential(
+          tool.connectorId,
+          context.userId,
+        );
+        if (!userCredential) {
+          throw new Error(
+            'You have not authorized this connector yet. Go to My Connections to connect your own account before calling this tool.',
+          );
+        }
+        resolvedAuthConfig = userCredential;
+      }
+
       const engineConfig = {
         baseUrl: this.resolveInternalBaseUrl(interpolatedConfig.baseUrl),
         authType: tool.connectorConfig.authType,
-        authConfig: tool.connectorConfig.authConfig
-          ? JSON.parse(tool.connectorConfig.authConfig)
-          : undefined,
+        authConfig: resolvedAuthConfig,
         headers: interpolatedConfig.headers,
         connectorId: tool.connectorId,
+        // Set only for PER_USER connectors. OAuth2TokenService uses this to
+        // key its in-memory cache/refresh-mutex per-(connector,user) instead
+        // of per-connector, and to persist refreshed tokens into this user's
+        // UserConnectorAuthorization row instead of the shared authConfig.
+        credentialUserId:
+          tool.connectorConfig.authMode === 'PER_USER' ? context!.userId : undefined,
         specUrl: (tool.connectorConfig as any).specUrl,
         ...(proxyUrl ? { proxyUrl } : {}),
       };

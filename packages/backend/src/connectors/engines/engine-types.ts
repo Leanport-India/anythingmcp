@@ -82,5 +82,10 @@ export interface ConnectorEngineConfig {
   authConfig?: Record<string, unknown>;
   headers?: Record<string, string>;
   connectorId?: string;
+  // Set only when this call is running against a PER_USER connector.
+  // OAuth2TokenService uses it to scope in-memory caching/refresh and to
+  // persist refreshed tokens into UserConnectorAuthorization instead of the
+  // connector's shared authConfig.
+  credentialUserId?: string;
   specUrl?: string;
 }

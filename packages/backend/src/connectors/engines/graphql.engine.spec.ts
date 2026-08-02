@@ -243,6 +243,7 @@ describe('GraphqlEngine', () => {
     expect(mockOAuth2TokenService.getAccessToken).toHaveBeenCalledWith(
       { accessToken: 'my-oauth-token' },
       'conn-1',
+      undefined,
     );
     expect(mockedAxios.post).toHaveBeenCalledWith(
       expect.any(String),
@@ -302,6 +303,7 @@ describe('GraphqlEngine', () => {
     expect(mockOAuth2TokenService.refreshToken).toHaveBeenCalledWith(
       expect.objectContaining({ refreshToken: 'rt', tokenUrl: 'https://auth/token' }),
       'conn-1',
+      undefined,
     );
     expect(mockedAxios.post).toHaveBeenCalledTimes(2);
   });

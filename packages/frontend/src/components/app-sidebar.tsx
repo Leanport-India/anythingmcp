@@ -35,6 +35,7 @@ const KgIcon = () => (
 );
 const SkillsIcon = () => <I d="m12 3 2.2 4.6 5 .7-3.6 3.5.9 5L12 14.9 7.5 16.8l.9-5L4.8 8.3l5-.7z" />;
 const OnboardingIcon = () => <I><path d="M12 2v4M12 2a10 10 0 1 0 10 10" /><path d="m16 12-4 4-2-2" /></I>;
+const ConnectionsIcon = () => <I><path d="M9 17H7A5 5 0 0 1 7 7h2M15 7h2a5 5 0 1 1 0 10h-2M8 12h8" /></I>;
 const SettingsIcon = () => (
   <I><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" /><circle cx="12" cy="12" r="3" /></I>
 );
@@ -70,6 +71,12 @@ const NAV: NavGroup[] = [
   {
     group: 'Get started',
     items: [{ href: '/welcome', label: 'Setup & onboarding', icon: OnboardingIcon, capability: 'canViewOnboarding' }],
+  },
+  {
+    group: 'My workspace',
+    items: [
+      { href: '/connections', label: 'My Connections', icon: ConnectionsIcon, capability: 'canAuthorizeAssignedConnectors' },
+    ],
   },
 ];
 

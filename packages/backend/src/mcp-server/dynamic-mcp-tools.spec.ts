@@ -50,6 +50,7 @@ describe('DynamicMcpTools Microsoft Graph mail attachments', () => {
     const prisma = { organization: { findUnique: jest.fn() } };
     const rest = { execute: jest.fn().mockResolvedValue(result) };
     const kg = { scheduleObservationalIngest: jest.fn() };
+    const connectorAuth = { getUserCredential: jest.fn().mockResolvedValue(null) };
 
     const subject = new DynamicMcpTools(
       registry as any,
@@ -64,6 +65,7 @@ describe('DynamicMcpTools Microsoft Graph mail attachments', () => {
       {} as any,
       {} as any,
       kg as any,
+      connectorAuth as any,
     );
 
     return { subject, audit, rest };

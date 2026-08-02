@@ -26,7 +26,12 @@ describe('OAuth2TokenService', () => {
       get: jest.fn().mockReturnValue(encryptionKey),
     } as any;
 
-    service = new OAuth2TokenService(mockPrisma, mockConfigService);
+    const mockConnectorAuth: any = {
+      getUserCredential: jest.fn().mockResolvedValue(null),
+      saveUserCredential: jest.fn(),
+    };
+
+    service = new OAuth2TokenService(mockPrisma, mockConfigService, mockConnectorAuth);
     jest.clearAllMocks();
     // Re-mock configService.get since clearAllMocks resets it
     mockConfigService.get.mockReturnValue(encryptionKey);
@@ -476,6 +481,108 @@ describe('OAuth2TokenService', () => {
         'Basic ' + Buffer.from('cid:sec').toString('base64'),
       );
       expect(body).not.toContain('client_secret=');
+    });
+  });
+
+  describe('PER_USER credential isolation', () => {
+    it('caches and refreshes per (connectorId, credentialUserId), not per connectorId alone', async () => {
+      const mockConnectorAuth: any = {
+        getUserCredential: jest.fn().mockResolvedValue({ refreshToken: 'user1-rt', tokenUrl: 'https://auth/token' }),
+        saveUserCredential: jest.fn().mockResolvedValue(undefined),
+      };
+      mockPrisma.connector.findUnique.mockResolvedValue({ organizationId: 'org-1' });
+      service = new OAuth2TokenService(mockPrisma, mockConfigService, mockConnectorAuth);
+
+      mockedAxios.post
+        .mockResolvedValueOnce({ data: { access_token: 'user1-at', expires_in: 3600 } })
+        .mockResolvedValueOnce({ data: { access_token: 'user2-at', expires_in: 3600 } });
+
+      const user1Token = await service.refreshToken(
+        { tokenUrl: 'https://auth/token', refreshToken: 'user1-rt' },
+        'conn-shared-app',
+        'user-1',
+      );
+      const user2Token = await service.refreshToken(
+        { tokenUrl: 'https://auth/token', refreshToken: 'user2-rt' },
+        'conn-shared-app',
+        'user-2',
+      );
+
+      expect(user1Token).toBe('user1-at');
+      expect(user2Token).toBe('user2-at');
+
+      // User 1's cached token must not leak to a lookup for user 2, and vice versa.
+      const cachedForUser1 = await service.getAccessToken(
+        { accessToken: 'stale' },
+        'conn-shared-app',
+        'user-1',
+      );
+      const cachedForUser2 = await service.getAccessToken(
+        { accessToken: 'stale' },
+        'conn-shared-app',
+        'user-2',
+      );
+      expect(cachedForUser1).toBe('user1-at');
+      expect(cachedForUser2).toBe('user2-at');
+    });
+
+    it('persists a refreshed PER_USER token via ConnectorAuthorizationsService, never into the shared connector row', async () => {
+      const mockConnectorAuth: any = {
+        getUserCredential: jest.fn().mockResolvedValue({ refreshToken: 'rt', tokenUrl: 'https://auth/token' }),
+        saveUserCredential: jest.fn().mockResolvedValue(undefined),
+      };
+      mockPrisma.connector.findUnique.mockResolvedValue({ organizationId: 'org-1' });
+      service = new OAuth2TokenService(mockPrisma, mockConfigService, mockConnectorAuth);
+
+      mockedAxios.post.mockResolvedValue({
+        data: { access_token: 'new-at', refresh_token: 'new-rt', expires_in: 3600 },
+      });
+
+      await service.refreshToken(
+        { tokenUrl: 'https://auth/token', refreshToken: 'rt' },
+        'conn-1',
+        'user-1',
+      );
+
+      expect(mockConnectorAuth.saveUserCredential).toHaveBeenCalledWith(
+        'conn-1',
+        'user-1',
+        'org-1',
+        expect.objectContaining({ accessToken: 'new-at', refreshToken: 'new-rt' }),
+      );
+      // The connector's own shared authConfig row must be untouched.
+      expect(mockPrisma.connector.update).not.toHaveBeenCalled();
+    });
+
+    it('getAccessToken loads this user\'s own credential from the DB via ConnectorAuthorizationsService, not the shared connector row', async () => {
+      const mockConnectorAuth: any = {
+        getUserCredential: jest.fn().mockResolvedValue({
+          refreshToken: 'db-rt',
+          tokenUrl: 'https://auth/token',
+          clientId: 'cid',
+          clientSecret: 'sec',
+        }),
+        saveUserCredential: jest.fn().mockResolvedValue(undefined),
+      };
+      mockPrisma.connector.findUnique.mockResolvedValue({ organizationId: 'org-1' });
+      service = new OAuth2TokenService(mockPrisma, mockConfigService, mockConnectorAuth);
+
+      mockedAxios.post.mockResolvedValue({
+        data: { access_token: 'refreshed-for-user', expires_in: 3600 },
+      });
+
+      // authConfig passed in has no expiry info → proactive refresh path runs,
+      // which must reload from the user's own row (not prisma.connector.authConfig).
+      await service.getAccessToken(
+        { refreshToken: 'stale-rt', tokenUrl: 'https://auth/token' },
+        'conn-1',
+        'user-1',
+      );
+
+      expect(mockConnectorAuth.getUserCredential).toHaveBeenCalledWith('conn-1', 'user-1');
+      expect(mockPrisma.connector.findUnique).not.toHaveBeenCalledWith(
+        expect.objectContaining({ select: { authConfig: true } }),
+      );
     });
   });
 });

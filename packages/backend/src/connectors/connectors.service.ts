@@ -131,6 +131,7 @@ export class ConnectorsService {
       baseUrl: string;
       authType: AuthType;
       authConfig: Record<string, unknown>;
+      authMode: import('../generated/prisma/client').ConnectorAuthMode;
       isActive: boolean;
       headers: Record<string, string>;
       config: Record<string, unknown>;

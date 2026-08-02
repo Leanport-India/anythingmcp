@@ -17,6 +17,7 @@ export class McpClientEngine {
       authConfig?: Record<string, unknown>;
       headers?: Record<string, string>;
       connectorId?: string;
+      credentialUserId?: string;
     },
     endpointMapping: {
       method: string; // MCP tool name on remote server
@@ -35,7 +36,13 @@ export class McpClientEngine {
     await assertSafeOutboundUrl(mcpUrl.toString());
 
     const headers: Record<string, string> = { ...config.headers };
-    await this.injectAuth(headers, config.authType, config.authConfig, config.connectorId);
+    await this.injectAuth(
+      headers,
+      config.authType,
+      config.authConfig,
+      config.connectorId,
+      config.credentialUserId,
+    );
 
     const transport = new StreamableHTTPClientTransport(mcpUrl, {
       requestInit: { headers },
@@ -67,6 +74,7 @@ export class McpClientEngine {
         const newToken = await this.oauth2TokenService.refreshToken(
           config.authConfig,
           config.connectorId,
+          config.credentialUserId,
         );
         if (newToken) {
           const retryHeaders: Record<string, string> = { ...config.headers };
@@ -110,6 +118,7 @@ export class McpClientEngine {
     headers?: Record<string, string>;
     mcpPath?: string;
     connectorId?: string;
+    credentialUserId?: string;
   }): Promise<
     Array<{
       name: string;
@@ -123,7 +132,13 @@ export class McpClientEngine {
     this.logger.debug(`MCP listTools: ${mcpUrl.toString()}`);
 
     const headers: Record<string, string> = { ...config.headers };
-    await this.injectAuth(headers, config.authType, config.authConfig, config.connectorId);
+    await this.injectAuth(
+      headers,
+      config.authType,
+      config.authConfig,
+      config.connectorId,
+      config.credentialUserId,
+    );
 
     const transport = new StreamableHTTPClientTransport(mcpUrl, {
       requestInit: { headers },
@@ -163,6 +178,7 @@ export class McpClientEngine {
     authType: string,
     authConfig?: Record<string, unknown>,
     connectorId?: string,
+    credentialUserId?: string,
   ): Promise<void> {
     if (!authConfig) return;
 
@@ -179,6 +195,7 @@ export class McpClientEngine {
         const accessToken = await this.oauth2TokenService.getAccessToken(
           authConfig,
           connectorId,
+          credentialUserId,
         );
         if (accessToken) {
           headers['Authorization'] = `Bearer ${accessToken}`;

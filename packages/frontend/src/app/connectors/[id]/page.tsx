@@ -7,6 +7,7 @@ import { connectors, tools } from '@/lib/api';
 import { findDemoByTool } from '@/lib/demo-connectors';
 import { ToolEditor } from '@/components/tool-editor';
 import { McpAssignModal } from '@/components/mcp-assign-modal';
+import { ConnectorAuthorizationAssignments } from '@/components/connector-authorization-assignments';
 import { AppSelect } from '@/components/ui/select';
 import { HeadersEditor, headerRowsToObject, objectToHeaderRows, type HeaderRow } from '@/components/headers-editor';
 import { AppShell } from '@/components/app-shell';
@@ -52,6 +53,7 @@ export default function ConnectorDetailPage() {
   const [editHealthcheckPath, setEditHealthcheckPath] = useState('');
   const [editActive, setEditActive] = useState(true);
   const [editAuthType, setEditAuthType] = useState('NONE');
+  const [editAuthMode, setEditAuthMode] = useState<'SHARED' | 'PER_USER'>('SHARED');
   const [editAuthKey, setEditAuthKey] = useState('');
   const [editAuthValue, setEditAuthValue] = useState('');
   // LOGIN_TOKEN (credentials → short-lived token, auto-refreshed) fields
@@ -117,6 +119,7 @@ export default function ConnectorDetailPage() {
       setEditHealthcheckPath(c.healthcheckPath || '');
       setEditActive(c.isActive);
       setEditAuthType(c.authType || 'NONE');
+      setEditAuthMode(c.authMode || 'SHARED');
       setEditInstructions(c.instructions || '');
       // Don't pre-fill credentials — they are encrypted on the server
       setEditAuthKey('');
@@ -211,6 +214,7 @@ export default function ConnectorDetailPage() {
         healthcheckPath: editHealthcheckPath.trim() || null,
         isActive: editActive,
         authType: editAuthType,
+        ...(editAuthType === 'OAUTH2' ? { authMode: editAuthMode } : {}),
         instructions: editInstructions.trim() || null,
       };
       const authConfig = buildAuthConfig();
@@ -723,6 +727,25 @@ export default function ConnectorDetailPage() {
                   ]}
                 />
               </div>
+              {editAuthType === 'OAUTH2' && (
+                <div>
+                  <label className="block text-sm font-medium mb-1">Who authorizes this connector?</label>
+                  <AppSelect
+                    value={editAuthMode}
+                    onValueChange={(v) => setEditAuthMode(v as 'SHARED' | 'PER_USER')}
+                    className="w-full border border-[var(--border)] rounded-[9px] px-3 py-2 text-sm bg-[var(--surface)] focus:outline-none focus:border-[var(--border-strong)]"
+                    options={[
+                      { value: 'SHARED', label: 'Admin authorizes once — shared by everyone' },
+                      { value: 'PER_USER', label: 'Each user authorizes with their own account' },
+                    ]}
+                  />
+                  <p className="text-xs text-[var(--text-3)] mt-1.5">
+                    {editAuthMode === 'PER_USER'
+                      ? "Each assigned user connects their own account from My Connections. No one's data or tokens are shared with anyone else."
+                      : 'You authorize once below; every assigned user shares this same credential.'}
+                  </p>
+                </div>
+              )}
               {editAuthType === 'API_KEY' && (
                 <div className="grid grid-cols-2 gap-4">
                   <div>
@@ -927,6 +950,8 @@ export default function ConnectorDetailPage() {
             </div>
           </Card>
         )}
+
+        <ConnectorAuthorizationAssignments connectorId={id} />
 
         {/* Environment Variables */}
         <Card className="p-[22px]">

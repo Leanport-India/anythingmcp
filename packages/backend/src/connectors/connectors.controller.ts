@@ -27,7 +27,7 @@ import {
   ArrayMinSize,
 } from 'class-validator';
 import { Type } from 'class-transformer';
-import { ConnectorType, AuthType } from '../generated/prisma/client';
+import { ConnectorType, AuthType, ConnectorAuthMode } from '../generated/prisma/client';
 import { ConnectorsService } from './connectors.service';
 import { buildGraphqlBuiltinTools, slugifyForPrefix } from './graphql-builtins';
 import { OpenApiParser } from './parsers/openapi.parser';
@@ -37,6 +37,7 @@ import { PostmanParser } from './parsers/postman.parser';
 import { CurlParser } from './parsers/curl.parser';
 import { McpClientEngine } from './engines/mcp-client.engine';
 import { McpOAuthService } from './mcp-oauth.service';
+import { ConnectorAuthorizationsService } from './connector-authorizations.service';
 import { CatalogResyncService } from './catalog-resync.service';
 import { PrismaService } from '../common/prisma.service';
 import { McpServerService } from '../mcp-server/mcp-server.service';
@@ -180,6 +181,16 @@ class UpdateConnectorDto {
   @IsOptional()
   @IsObject()
   authConfig?: Record<string, unknown>;
+
+  @ApiPropertyOptional({
+    enum: ConnectorAuthMode,
+    description:
+      'SHARED (default): one admin-authorized credential used by everyone. ' +
+      'PER_USER: each assigned user must authorize with their own OAuth2 account.',
+  })
+  @IsOptional()
+  @IsEnum(ConnectorAuthMode)
+  authMode?: ConnectorAuthMode;
 
   @ApiPropertyOptional({
     description: 'Set to false to disable the connector without deleting it.',
@@ -391,6 +402,7 @@ export class ConnectorsController {
     private readonly curlParser: CurlParser,
     private readonly mcpClientEngine: McpClientEngine,
     private readonly mcpOAuthService: McpOAuthService,
+    private readonly connectorAuth: ConnectorAuthorizationsService,
     private readonly catalogResync: CatalogResyncService,
     private readonly prisma: PrismaService,
     private readonly mcpServer: McpServerService,
@@ -1304,5 +1316,47 @@ export class ConnectorsController {
       // shape; always empty under the new upsert strategy.
       skipped: [] as string[],
     };
+  }
+
+  // ── Non-admin authorization assignments (admin allowlist management) ─────
+
+  @Get(':id/authorization-assignments')
+  @ApiOperation({
+    summary: 'List which users/roles may see and authorize this connector',
+  })
+  async listAuthorizationAssignments(@Req() req: any, @Param('id') id: string) {
+    const connector = await this.connectorsService.findById(id);
+    this.assertCanWrite(connector, req);
+    return this.connectorAuth.listAssignmentsForConnector(id, req.user.organizationId);
+  }
+
+  @Post(':id/authorization-assignments')
+  @ApiOperation({
+    summary: 'Assign this connector to a user or MCP role',
+    description:
+      'Grants visibility and (for PER_USER connectors) the ability to self-authorize. ' +
+      'Provide exactly one of userId or roleId.',
+  })
+  async createAuthorizationAssignment(
+    @Req() req: any,
+    @Param('id') id: string,
+    @Body() dto: { userId?: string; roleId?: string },
+  ) {
+    const connector = await this.connectorsService.findById(id);
+    this.assertCanWrite(connector, req);
+    return this.connectorAuth.assign(id, req.user.organizationId, req.user.sub, dto);
+  }
+
+  @Delete(':id/authorization-assignments/:assignmentId')
+  @ApiOperation({ summary: 'Remove a user/role assignment for this connector' })
+  async deleteAuthorizationAssignment(
+    @Req() req: any,
+    @Param('id') id: string,
+    @Param('assignmentId') assignmentId: string,
+  ) {
+    const connector = await this.connectorsService.findById(id);
+    this.assertCanWrite(connector, req);
+    await this.connectorAuth.unassign(assignmentId, req.user.organizationId);
+    return { success: true };
   }
 }

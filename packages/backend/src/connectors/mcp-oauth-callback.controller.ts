@@ -4,6 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import type { Response } from 'express';
 import { McpOAuthService } from './mcp-oauth.service';
 import { ConnectorsService } from './connectors.service';
+import { ConnectorAuthorizationsService } from './connector-authorizations.service';
 import { McpClientEngine } from './engines/mcp-client.engine';
 import { PrismaService } from '../common/prisma.service';
 import { McpServerService } from '../mcp-server/mcp-server.service';
@@ -20,6 +21,7 @@ export class McpOAuthCallbackController {
   constructor(
     private readonly mcpOAuthService: McpOAuthService,
     private readonly connectorsService: ConnectorsService,
+    private readonly connectorAuth: ConnectorAuthorizationsService,
     private readonly mcpClientEngine: McpClientEngine,
     private readonly prisma: PrismaService,
     private readonly mcpServer: McpServerService,
@@ -70,6 +72,36 @@ export class McpOAuthCallbackController {
       this.logger.log(
         `OAuth tokens obtained for connector ${flow.connectorId}`,
       );
+
+      if (flow.perUser) {
+        // Per-user grant: the token belongs only to flow.userId and is
+        // stored separately from the connector's shared authConfig. Other
+        // users' access to this connector (or the connector's own shared
+        // credential, if any) is untouched.
+        const existingConnector = await this.connectorsService.findByIdInternal(
+          flow.connectorId,
+        );
+
+        await this.connectorAuth.saveUserCredential(
+          flow.connectorId,
+          flow.userId,
+          existingConnector.organizationId,
+          {
+            accessToken: tokens.accessToken,
+            refreshToken: tokens.refreshToken,
+            tokenUrl: flow.tokenUrl,
+            clientId: flow.clientId,
+            clientSecret: flow.clientSecret,
+            tokenAuthMethod: flow.tokenAuthMethod,
+            expiresIn: tokens.expiresIn,
+            expiresAt: Date.now() + (tokens.expiresIn || 3600) * 1000,
+            authorizedAt: new Date().toISOString(),
+          },
+        );
+
+        this.mcpOAuthService.deletePendingFlow(state);
+        return res.redirect(`${frontendUrl}/connections?oauth=success`);
+      }
 
       // 2. Store tokens (encrypted) in the connector's authConfig.
       // Preserve static OAuth settings (authorizationUrl, scopes, auth method)
@@ -179,9 +211,24 @@ export class McpOAuthCallbackController {
             ? ` providerResponse=${JSON.stringify(providerData)}`
             : ''),
       );
+      if (flow.perUser) {
+        try {
+          const connector = await this.connectorsService.findByIdInternal(flow.connectorId);
+          await this.connectorAuth.recordUserAuthError(
+            flow.connectorId,
+            flow.userId,
+            connector.organizationId,
+            error.message,
+          );
+        } catch {
+          // Best-effort — the redirect below still informs the user.
+        }
+      }
       this.mcpOAuthService.deletePendingFlow(state);
       return res.redirect(
-        `${frontendUrl}/connectors/${flow.connectorId}?oauth=error&message=${encodeURIComponent(error.message)}`,
+        flow.perUser
+          ? `${frontendUrl}/connections?oauth=error&message=${encodeURIComponent(error.message)}`
+          : `${frontendUrl}/connectors/${flow.connectorId}?oauth=error&message=${encodeURIComponent(error.message)}`,
       );
     }
   }

@@ -225,6 +225,52 @@ export const connectors = {
       `/api/connectors/${id}/discover-tools`,
       { method: 'POST', token },
     ),
+  listAuthorizationAssignments: (id: string, token: string) =>
+    request<any[]>(`/api/connectors/${id}/authorization-assignments`, { token }),
+  createAuthorizationAssignment: (
+    id: string,
+    data: { userId?: string; roleId?: string },
+    token: string,
+  ) =>
+    request<any>(`/api/connectors/${id}/authorization-assignments`, {
+      method: 'POST',
+      body: data,
+      token,
+    }),
+  deleteAuthorizationAssignment: (id: string, assignmentId: string, token: string) =>
+    request(`/api/connectors/${id}/authorization-assignments/${assignmentId}`, {
+      method: 'DELETE',
+      token,
+    }),
+};
+
+// My Connections — end-user view of admin-assigned connectors ("My
+// Connections"). Never exposes connector internals (base URL, headers,
+// auth config) — only what a user needs to see and authorize their own.
+export const myConnections = {
+  list: (token: string) =>
+    request<
+      Array<{
+        connectorId: string;
+        name: string;
+        type: string;
+        authMode: 'SHARED' | 'PER_USER';
+        instructions: string | null;
+        status: 'PENDING' | 'AUTHORIZED' | 'REVOKED' | 'ERROR';
+        lastError: string | null;
+        authorizedAt: string | null;
+      }>
+    >('/api/me/connector-authorizations', { token }),
+  authorize: (connectorId: string, token: string) =>
+    request<{ authorizationUrl?: string }>(
+      `/api/me/connector-authorizations/${connectorId}/oauth/authorize`,
+      { method: 'POST', token },
+    ),
+  revoke: (connectorId: string, token: string) =>
+    request(`/api/me/connector-authorizations/${connectorId}`, {
+      method: 'DELETE',
+      token,
+    }),
 };
 
 // Adapters (built-in connector recipes)

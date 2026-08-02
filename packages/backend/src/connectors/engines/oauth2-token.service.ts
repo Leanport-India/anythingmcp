@@ -5,6 +5,7 @@ import { PrismaService } from '../../common/prisma.service';
 import { encrypt, decrypt } from '../../common/crypto/encryption.util';
 import { getRequiredSecret } from '../../common/secrets.util';
 import { assertSafeOutboundUrl } from '../../common/ssrf.util';
+import { ConnectorAuthorizationsService } from '../connector-authorizations.service';
 
 /** Refresh tokens that expire within this window (5 minutes). */
 const PROACTIVE_REFRESH_BUFFER_MS = 5 * 60 * 1000;
@@ -44,6 +45,7 @@ export class OAuth2TokenService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly configService: ConfigService,
+    private readonly connectorAuth: ConnectorAuthorizationsService,
   ) {
     this.encryptionKey = getRequiredSecret(
       'ENCRYPTION_KEY',
@@ -61,8 +63,9 @@ export class OAuth2TokenService {
   async getAccessToken(
     authConfig: Record<string, unknown>,
     connectorId?: string,
+    credentialUserId?: string,
   ): Promise<string> {
-    const cacheKey = connectorId || String(authConfig.tokenUrl || '');
+    const cacheKey = this.buildCacheKey(connectorId, credentialUserId, authConfig);
     const grant = String(authConfig.grant || 'refresh_token');
 
     // 1. Check cache — return immediately if well within validity
@@ -84,7 +87,7 @@ export class OAuth2TokenService {
 
     if (hasRefreshCapability && tokenNearExpiry) {
       this.logger.debug(`OAuth2 (${grant}): token near expiry, proactive refresh...`);
-      const refreshed = await this.refreshTokenWithMutex(authConfig, connectorId);
+      const refreshed = await this.refreshTokenWithMutex(authConfig, connectorId, credentialUserId);
       if (refreshed) {
         return refreshed;
       }
@@ -103,6 +106,21 @@ export class OAuth2TokenService {
   }
 
   /**
+   * Cache/mutex key. PER_USER credentials (credentialUserId set) must never
+   * collide with the connector's own shared-credential key or with another
+   * user's key — otherwise one user's refresh could clobber or leak into
+   * another user's in-memory token.
+   */
+  private buildCacheKey(
+    connectorId?: string,
+    credentialUserId?: string,
+    authConfig?: Record<string, unknown>,
+  ): string {
+    if (connectorId && credentialUserId) return `${connectorId}:user:${credentialUserId}`;
+    return connectorId || String(authConfig?.tokenUrl || '');
+  }
+
+  /**
    * Refresh the OAuth2 access token using the refresh token.
    * On success: caches in-memory and persists to DB.
    * Returns the new access token, or null on failure.
@@ -110,11 +128,12 @@ export class OAuth2TokenService {
   async refreshToken(
     authConfig: Record<string, unknown>,
     connectorId?: string,
+    credentialUserId?: string,
   ): Promise<string | null> {
     // Rolling refresh tokens invalidate the previous refresh token after every
     // use, so reload the persisted config before refreshing a DB-backed connector.
     if (connectorId) {
-      const fresh = await this.loadAuthConfigFromDb(connectorId);
+      const fresh = await this.loadAuthConfigFromDb(connectorId, credentialUserId);
       if (fresh) authConfig = { ...authConfig, ...fresh };
     }
 
@@ -196,7 +215,7 @@ export class OAuth2TokenService {
 
       // Cache the new token
       const expiresInMs = (expires_in || 3600) * 1000;
-      const cacheKey = connectorId || tokenUrl;
+      const cacheKey = this.buildCacheKey(connectorId, credentialUserId, { tokenUrl });
       this.tokenCache.set(cacheKey, {
         accessToken: access_token,
         expiresAt: Date.now() + expiresInMs,
@@ -211,6 +230,7 @@ export class OAuth2TokenService {
           access_token,
           newRefreshToken || refreshToken || '',
           Date.now() + expiresInMs,
+          credentialUserId,
         );
       }
 
@@ -228,8 +248,9 @@ export class OAuth2TokenService {
   private async refreshTokenWithMutex(
     authConfig: Record<string, unknown>,
     connectorId?: string,
+    credentialUserId?: string,
   ): Promise<string | null> {
-    const cacheKey = connectorId || String(authConfig.tokenUrl || '');
+    const cacheKey = this.buildCacheKey(connectorId, credentialUserId, authConfig);
 
     // If a refresh is already in-flight for this key, wait for it
     const inFlight = this.refreshInFlight.get(cacheKey);
@@ -237,7 +258,7 @@ export class OAuth2TokenService {
       return inFlight;
     }
 
-    const refreshPromise = this.refreshToken(authConfig, connectorId).finally(() => {
+    const refreshPromise = this.refreshToken(authConfig, connectorId, credentialUserId).finally(() => {
       this.refreshInFlight.delete(cacheKey);
     });
 
@@ -278,8 +299,15 @@ export class OAuth2TokenService {
    */
   private async loadAuthConfigFromDb(
     connectorId: string,
+    credentialUserId?: string,
   ): Promise<Record<string, unknown> | null> {
     try {
+      if (credentialUserId) {
+        // PER_USER: read this user's own credential, never the connector's
+        // shared authConfig — other users' calls must never see this data.
+        return this.connectorAuth.getUserCredential(connectorId, credentialUserId);
+      }
+
       const connector = await this.prisma.connector.findUnique({
         where: { id: connectorId },
         select: { authConfig: true },
@@ -301,8 +329,33 @@ export class OAuth2TokenService {
     newAccessToken: string,
     newRefreshToken: string,
     expiresAt: number,
+    credentialUserId?: string,
   ): Promise<void> {
     try {
+      if (credentialUserId) {
+        // PER_USER: persist into this user's own authorization row only.
+        const existing = await this.connectorAuth.getUserCredential(connectorId, credentialUserId);
+        if (!existing) return;
+
+        const connector = await this.prisma.connector.findUnique({
+          where: { id: connectorId },
+          select: { organizationId: true },
+        });
+        if (!connector) return;
+
+        await this.connectorAuth.saveUserCredential(connectorId, credentialUserId, connector.organizationId, {
+          ...existing,
+          accessToken: newAccessToken,
+          refreshToken: newRefreshToken,
+          expiresAt,
+          lastRefreshedAt: new Date().toISOString(),
+        });
+        this.logger.debug(
+          `OAuth2: persisted refreshed token for connector ${connectorId} (user ${credentialUserId})`,
+        );
+        return;
+      }
+
       const connector = await this.prisma.connector.findUnique({
         where: { id: connectorId },
         select: { authConfig: true },

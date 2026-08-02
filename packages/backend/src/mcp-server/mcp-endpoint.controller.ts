@@ -25,6 +25,10 @@ import { RolesService } from '../roles/roles.service';
 import { registerDemoTools } from './mcp-demo.tools';
 import { KgService } from '../knowledge-graph/kg.service';
 import { outputSchemaToZodShape } from '../connectors/output-schema.util';
+import {
+  annotationsSignature,
+  deriveToolAnnotations,
+} from './tool-annotations';
 
 /** Minimal handle returned by McpServer.tool()/registerTool() that we keep so a
  * live (stateful) session can drop a tool when its surface changes. */
@@ -658,11 +662,16 @@ export class McpEndpointController {
         ? outputSchemaToZodShape(tool.outputSchema)
         : null;
 
+      // Advisory hints (readOnlyHint & co) so an agent can tell a probe-safe
+      // tool from a mutating one before calling it.
+      const annotations = deriveToolAnnotations(tool);
+
       const sig = [
         tool.name,
         tool.description,
         Object.keys(zodShape).sort().join(','),
         outShape ? Object.keys(outShape).sort().join(',') : '',
+        annotationsSignature(annotations),
       ].join('');
 
       entries.push({
@@ -684,37 +693,43 @@ export class McpEndpointController {
               ctx,
             );
             // When an outputSchema is advertised, the SDK requires
-            // structuredContent on success. Provide the parsed object
+            // structuredContent on success. Provide the result object
             // (permissive schema never fails); errors skip validation.
+            // `structured` is our own transport field, not part of the MCP
+            // result shape — strip it before returning either way.
+            const { structured: direct, ...rest } = result;
             if (outShape && !result.isError) {
+              // Prefer the executor's object. Re-parsing content[0].text used
+              // to be the only source, and it silently yielded {} for every
+              // tool with a followUp hint (the appended text broke JSON.parse).
+              // The text parse stays as a fallback for results without it.
               let structured: Record<string, unknown> = {};
-              try {
-                const parsed = JSON.parse(result.content?.[0]?.text ?? '{}');
-                if (parsed && typeof parsed === 'object' && !Array.isArray(parsed))
-                  structured = parsed;
-              } catch {
-                /* keep {} */
+              if (direct && typeof direct === 'object' && !Array.isArray(direct)) {
+                structured = direct as Record<string, unknown>;
+              } else if (direct === undefined) {
+                try {
+                  const parsed = JSON.parse(result.content?.[0]?.text ?? '{}');
+                  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed))
+                    structured = parsed;
+                } catch {
+                  /* keep {} */
+                }
               }
-              return { ...result, structuredContent: structured };
+              return { ...rest, structuredContent: structured };
             }
-            return result;
+            return rest;
           };
 
-          if (outShape) {
-            return mcpServer.registerTool(
-              tool.name,
-              {
-                description: tool.description,
-                inputSchema: zodShape,
-                outputSchema: outShape,
-              },
-              handler,
-            ) as unknown as ToolHandle;
-          }
-          return mcpServer.tool(
+          // registerTool for both branches: the legacy tool() overload has no
+          // slot for annotations.
+          return mcpServer.registerTool(
             tool.name,
-            tool.description,
-            zodShape,
+            {
+              description: tool.description,
+              inputSchema: zodShape,
+              ...(outShape ? { outputSchema: outShape } : {}),
+              annotations,
+            },
             handler,
           ) as unknown as ToolHandle;
         },
@@ -735,18 +750,27 @@ export class McpEndpointController {
         name: 'kg_how_to_obtain',
         sig: 'kg_how_to_obtain',
         register: (mcpServer: McpServer) =>
-          mcpServer.tool(
+          mcpServer.registerTool(
             'kg_how_to_obtain',
-            'Knowledge graph for THIS MCP server: given an entity or a parameter you need ' +
-              '(e.g. "customer_id", "order", "person"), returns which entities/tools produce ' +
-              'or relate to it across the connectors assigned to this server, plus any ' +
-              'human-written descriptions and the workspace skills (pre-built workflows) you ' +
-              'can use. Relationships are learned from these connectors, real usage, and ' +
-              'curated edits, so you can chain tool calls.',
             {
-              query: z
-                .string()
-                .describe('An entity or parameter name, e.g. "customer_id" or "deal".'),
+              description:
+                'Knowledge graph for THIS MCP server: given an entity or a parameter you need ' +
+                '(e.g. "customer_id", "order", "person"), returns which entities/tools produce ' +
+                'or relate to it across the connectors assigned to this server, plus any ' +
+                'human-written descriptions and the workspace skills (pre-built workflows) you ' +
+                'can use. Relationships are learned from these connectors, real usage, and ' +
+                'curated edits, so you can chain tool calls.',
+              inputSchema: {
+                query: z
+                  .string()
+                  .describe('An entity or parameter name, e.g. "customer_id" or "deal".'),
+              },
+              // Pure lookup over this workspace's own graph.
+              annotations: {
+                title: 'How to obtain',
+                readOnlyHint: true,
+                openWorldHint: false,
+              },
             },
             async (args: { query: string }) => {
               const result = await this.kgService.lookup(orgId, args.query, {

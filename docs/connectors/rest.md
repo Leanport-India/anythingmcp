@@ -186,16 +186,86 @@ The `endpointMapping` defines how MCP tool parameters map to the HTTP request:
 
 ### Response Mapping
 
-Optionally filter and transform API responses:
+Optionally shape the API response before it reaches the AI client. Without it,
+the raw upstream response is returned unchanged.
+
+APIs routinely return far more than a tool needs — a Datto RMM device carries up
+to 300 UDF fields, IPs and remote-control URLs when the tool only wants hostname,
+site, OS and status. Every extra byte is billed to the agent's context window and
+exposed to a third-party model. A response mapping declares what a tool actually
+publishes.
 
 ```json
 {
   "responseMapping": {
-    "type": "json",
-    "fields": ["id", "name", "email", "status"]
+    "transform": {
+      "select": {
+        "page": {
+          "count": "$.pageDetails.count",
+          "totalCount": "$.pageDetails.totalCount",
+          "nextPageUrl": "$.pageDetails.nextPageUrl"
+        },
+        "devices": {
+          "$from": "$.devices[*]",
+          "$select": {
+            "id": "id",
+            "hostname": "hostname",
+            "siteName": "siteName",
+            "category": "deviceType.category",
+            "operatingSystem": "operatingSystem",
+            "online": "online",
+            "antivirusStatus": "antivirus.antivirusStatus"
+          }
+        }
+      },
+      "exclude": ["devices[*].udf"]
+    }
   }
 }
 ```
+
+#### `transform` keys
+
+| Key | Meaning |
+|-----|---------|
+| `select` | Output template. Keys are the output names; leaf syntax below. |
+| `include` | Keep only these paths, preserving the original document shape. |
+| `exclude` | Drop these paths. Applied **before** `include` / `select`. |
+| `expression` | A [JMESPath](https://jmespath.org) expression, with `"mode": "jmespath"`. Use it for computed values (`length(devices)`) and filters (``devices[?online == `false`]``). |
+| `mode` | `select` (default), `jmespath`, or `off` to keep the config without applying it. |
+| `fallbackToRaw` | Default `true`: a mapping that fails returns the raw response and logs a warning rather than failing the call. Set `false` to surface the error instead. |
+| `maxBytes` | Hard cap on the serialized output. `0` / absent = no cap. On overflow the result is replaced by `{ "_truncated": true, … }`. |
+
+#### Leaf syntax in `select`
+
+| Leaf | Result |
+|------|--------|
+| `"$.a.b"` / `"a.b"` | Value at that path. A leading `$.` is optional. |
+| `"items[*].id"` | Array of `id` over `items` — elements without the field are skipped. |
+| `"items[0].id"`, `"items[-1].id"` | Index access; negative counts from the end. |
+| `"a['weird.key']"` | Quoted segment, for keys containing dots. |
+| `"= my-source"` | Static string literal (`= ` prefix), for constants. |
+| `42`, `true`, `null` | Passed through as-is. |
+| `{ "$from": "path[*]", "$select": { … } }` | Reshape every element of an array. Optional `$limit` caps how many. |
+
+A path that does not resolve leaves its key **out** of the output rather than
+emitting `null` — that is what keeps mapped responses small.
+
+Response mapping applies to every connector type, not just REST.
+
+#### Legacy shape
+
+`{"type": "json", "fields": [...]}` is still honoured and behaves as
+`transform.include`.
+
+#### Editing and previewing
+
+- UI: **Connector → tool → Edit → Response Mapping**. "Preview with last real
+  response" maps the most recent recorded response for that tool without calling
+  the API again, and shows the size delta.
+- API: `PATCH /api/connectors/:id/tools/:toolId/response-mapping` sets or clears
+  it, `POST .../preview-mapping` dry-runs one. The tool test endpoint returns
+  both `result` (raw) and `mapped`.
 
 ---
 
@@ -220,6 +290,42 @@ OAuth2 connectors use the **Authorization Code + PKCE** flow:
 3. From the connector detail page, click **Authorize with Provider** — you will be redirected to the provider's login/consent screen.
 4. After consent, the backend exchanges the authorization code for access and refresh tokens (stored encrypted).
 5. On 401 responses, the engine automatically refreshes the token using the stored refresh token and retries the request.
+
+#### Token endpoint authentication (`client_secret_basic`)
+
+By default the client credentials are sent **in the body** of the token request (`client_secret_post`).
+Some providers — **Datto RMM** and **DATEV** among them — only accept them as an **HTTP Basic header**
+(`Authorization: Basic base64(client_id:client_secret)`, RFC 6749 §2.3.1) and answer anything else with
+`401` at the code-exchange step.
+
+Pick the method in the connector form under **Token endpoint authentication**, or set it directly:
+
+```bash
+curl -s -X PATCH http://localhost:4000/api/connectors/$CONNECTOR_ID/oauth-config \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"tokenAuthMethod": "client_secret_basic"}'
+```
+
+Notes:
+
+- The setting applies to **both** the initial authorization-code exchange **and** later refreshes.
+- `PATCH .../oauth-config` merges — it will not drop the tokens already issued or the endpoints captured
+  during authorization. Send `""` to go back to the default.
+- `GET .../oauth-config` returns the current settings; the client secret and tokens are never returned,
+  only `hasClientSecret` / `hasAccessToken` / `hasRefreshToken` booleans.
+- After switching the method, re-run **Authorize with Provider** so a token is fetched the new way.
+
+Example — Datto RMM:
+
+| Field | Value |
+|---|---|
+| Authorization URL | `https://<zone>-api.centrastage.net/auth/oauth/authorize` |
+| Token URL | `https://<zone>-api.centrastage.net/auth/oauth/token` |
+| Client ID / Secret | `public-client` / `public` |
+| Token endpoint authentication | **HTTP Basic header** |
+
+The API key and secret key of the technical user are entered on the provider's own consent screen.
 
 ---
 

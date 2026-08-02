@@ -12,20 +12,55 @@
 
 const VAR_PATTERN = /\{\{([^}]+)\}\}/g;
 
+export interface InterpolateOptions {
+  /**
+   * Namespace prefix (e.g. `amcp.`) whose variables are resolved by the server
+   * rather than by the workspace. A variable under this prefix that has no
+   * value resolves to an empty string instead of being left verbatim, so an
+   * unresolved placeholder is never sent to the target system.
+   */
+  reservedPrefix?: string;
+  /**
+   * Escape substituted values for a JSON string context. Use when the template
+   * is raw JSON text (a bodyTemplate) rather than a value inside an already
+   * structured object, so a quote or backslash in the value cannot terminate
+   * the surrounding string and inject syntax.
+   *
+   * Only the content is escaped — no quotes are added — so a bare numeric
+   * placeholder such as `{"limit": {{MAX}}}` still yields valid JSON.
+   */
+  jsonEscape?: boolean;
+}
+
+/** Escape a value for embedding inside a JSON string literal. */
+function escapeForJsonString(value: string): string {
+  const encoded = JSON.stringify(value);
+  return encoded.slice(1, -1);
+}
+
 /**
  * Interpolate {{VAR}} patterns in a string.
+ *
+ * An unknown variable is left as-is (so a stray `{{` in a template survives) —
+ * except under `reservedPrefix`, which always resolves.
  */
 export function interpolateString(
   template: string,
   envVars: Record<string, string>,
+  options?: InterpolateOptions,
 ): string {
   // Callers pass optional fields (e.g. a static tool's endpointMapping has no
   // `path`). Guard against a non-string template so interpolation never throws
   // "Cannot read properties of undefined (reading 'replace')".
   if (typeof template !== 'string') return template;
+  const reservedPrefix = options?.reservedPrefix;
+  const emit = (value: string) =>
+    options?.jsonEscape ? escapeForJsonString(value) : value;
   return template.replace(VAR_PATTERN, (match, varName) => {
     const trimmed = varName.trim();
-    return envVars[trimmed] !== undefined ? envVars[trimmed] : match;
+    if (envVars[trimmed] !== undefined) return emit(envVars[trimmed]);
+    if (reservedPrefix && trimmed.startsWith(reservedPrefix)) return '';
+    return match;
   });
 }
 
@@ -36,21 +71,29 @@ export function interpolateString(
 export function interpolateDeep<T>(
   value: T,
   envVars: Record<string, string>,
+  options?: InterpolateOptions,
 ): T {
-  if (!envVars || Object.keys(envVars).length === 0) return value;
+  if (
+    (!envVars || Object.keys(envVars).length === 0) &&
+    !options?.reservedPrefix
+  ) {
+    return value;
+  }
 
   if (typeof value === 'string') {
-    return interpolateString(value, envVars) as unknown as T;
+    return interpolateString(value, envVars, options) as unknown as T;
   }
 
   if (Array.isArray(value)) {
-    return value.map((item) => interpolateDeep(item, envVars)) as unknown as T;
+    return value.map((item) =>
+      interpolateDeep(item, envVars, options),
+    ) as unknown as T;
   }
 
   if (value !== null && typeof value === 'object') {
     const result: Record<string, unknown> = {};
     for (const [key, val] of Object.entries(value)) {
-      result[key] = interpolateDeep(val, envVars);
+      result[key] = interpolateDeep(val, envVars, options);
     }
     return result as T;
   }
@@ -60,7 +103,12 @@ export function interpolateDeep<T>(
 
 /**
  * Interpolate connector config fields with env vars.
- * Applies to: baseUrl, headers, endpointMapping (path, queryParams, bodyMapping, headers).
+ * Applies to: baseUrl, headers, endpointMapping (path, queryParams, bodyMapping,
+ * bodyTemplate, headers).
+ *
+ * `options.reservedPrefix` enables the server-resolved namespace (see
+ * caller-context.util.ts). Reserved values must already be merged into
+ * `envVars` *after* the workspace's own vars so they cannot be shadowed.
  */
 export function interpolateConnectorConfig(
   config: {
@@ -72,36 +120,51 @@ export function interpolateConnectorConfig(
     path: string;
     queryParams?: Record<string, unknown>;
     bodyMapping?: Record<string, unknown>;
+    bodyTemplate?: string;
     headers?: Record<string, string>;
   },
   envVars: Record<string, string>,
+  options?: InterpolateOptions,
 ): {
   config: { baseUrl: string; headers?: Record<string, string> };
   endpointMapping: typeof endpointMapping;
 } {
-  if (!envVars || Object.keys(envVars).length === 0) {
+  if (
+    (!envVars || Object.keys(envVars).length === 0) &&
+    !options?.reservedPrefix
+  ) {
     return { config, endpointMapping };
   }
 
   return {
     config: {
       ...config,
-      baseUrl: interpolateString(config.baseUrl, envVars),
+      baseUrl: interpolateString(config.baseUrl, envVars, options),
       headers: config.headers
-        ? interpolateDeep(config.headers, envVars)
+        ? interpolateDeep(config.headers, envVars, options)
         : undefined,
     },
     endpointMapping: {
       ...endpointMapping,
-      path: interpolateString(endpointMapping.path, envVars),
+      path: interpolateString(endpointMapping.path, envVars, options),
       queryParams: endpointMapping.queryParams
-        ? interpolateDeep(endpointMapping.queryParams, envVars)
+        ? interpolateDeep(endpointMapping.queryParams, envVars, options)
         : undefined,
       bodyMapping: endpointMapping.bodyMapping
-        ? interpolateDeep(endpointMapping.bodyMapping, envVars)
+        ? interpolateDeep(endpointMapping.bodyMapping, envVars, options)
+        : undefined,
+      // A bodyTemplate is raw JSON text, so substituted values must be escaped
+      // for a JSON string context — otherwise a quote in a value would break
+      // the document. Without this, {{VAR}} (and {{amcp.*}}) silently reached
+      // the target system unresolved.
+      bodyTemplate: endpointMapping.bodyTemplate
+        ? interpolateString(endpointMapping.bodyTemplate, envVars, {
+            ...options,
+            jsonEscape: true,
+          })
         : undefined,
       headers: endpointMapping.headers
-        ? interpolateDeep(endpointMapping.headers, envVars)
+        ? interpolateDeep(endpointMapping.headers, envVars, options)
         : undefined,
     },
   };

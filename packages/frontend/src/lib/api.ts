@@ -187,6 +187,39 @@ export const connectors = {
     request<any>(`/api/connectors/${id}`, { token }),
   update: (id: string, data: unknown, token: string) =>
     request(`/api/connectors/${id}`, { method: 'PUT', body: data, token }),
+  /** Non-secret OAuth2 settings, for pre-filling the edit form. */
+  getOAuthConfig: (id: string, token: string) =>
+    request<{
+      clientId: string;
+      authorizationUrl: string;
+      tokenUrl: string;
+      scopes: string;
+      tokenAuthMethod: string;
+      hasClientSecret: boolean;
+      hasAccessToken: boolean;
+      hasRefreshToken: boolean;
+    }>(`/api/connectors/${id}/oauth-config`, { token }),
+  /**
+   * Partial update of the OAuth2 settings. Merges server-side, so editing one
+   * field keeps the stored tokens and the rest of the configuration intact.
+   */
+  updateOAuthConfig: (
+    id: string,
+    data: {
+      clientId?: string;
+      clientSecret?: string;
+      authorizationUrl?: string;
+      tokenUrl?: string;
+      scopes?: string;
+      tokenAuthMethod?: string;
+    },
+    token: string,
+  ) =>
+    request<{ message: string }>(`/api/connectors/${id}/oauth-config`, {
+      method: 'PATCH',
+      body: data,
+      token,
+    }),
   delete: (id: string, token: string) =>
     request(`/api/connectors/${id}`, { method: 'DELETE', token }),
   test: (id: string, token: string) =>
@@ -287,6 +320,68 @@ export const adapters = {
 };
 
 // Tools
+/**
+ * MCP tool annotations — advisory hints an agent reads before calling a tool.
+ * Normally derived from the connector; an override corrects cases the
+ * derivation cannot know (classically a read-only search exposed over POST).
+ */
+export interface ToolAnnotations {
+  title?: string;
+  readOnlyHint?: boolean;
+  destructiveHint?: boolean;
+  idempotentHint?: boolean;
+  openWorldHint?: boolean;
+}
+
+/**
+ * Optional per-tool shaping of the API response before it reaches the MCP
+ * client. Absent means the raw upstream response is returned unchanged.
+ */
+export interface ResponseTransform {
+  mode?: 'select' | 'jmespath' | 'off';
+  /** Keep only these paths, preserving the document shape. */
+  include?: string[];
+  /** Drop these paths. Applied before include/select. */
+  exclude?: string[];
+  /** Output template — leaves are paths (`$.a.b`), `= literal`, or `{ $from, $select }`. */
+  select?: Record<string, unknown>;
+  /** JMESPath expression, for computed values. */
+  expression?: string;
+  /** On error, return the raw response instead of failing. Default true. */
+  fallbackToRaw?: boolean;
+  /** Hard cap on the serialized output. 0 = off. */
+  maxBytes?: number;
+}
+
+/** Size accounting returned by the test and preview endpoints. */
+export interface MappingSummary {
+  mapped?: unknown;
+  mappingApplied?: boolean;
+  mappingError?: string;
+  mappingTruncated?: boolean;
+  rawBytes?: number;
+  mappedBytes?: number;
+  bytesSavedPct?: number;
+}
+
+export interface MappingPreview extends MappingSummary {
+  ok: boolean;
+  sampleSource: 'body' | 'last-invocation' | 'none';
+  sampleCapturedAt?: string | null;
+  raw?: unknown;
+  error?: string;
+}
+
+export interface ToolTestResult extends MappingSummary {
+  ok: boolean;
+  durationMs: number;
+  result?: unknown;
+  error?: string;
+  note?: string;
+  hint?: string;
+  kind?: string;
+}
+
 export const tools = {
   list: (connectorId: string, token: string) =>
     request<any[]>(`/api/connectors/${connectorId}/tools`, { token }),
@@ -305,13 +400,66 @@ export const tools = {
       body: { useProxy },
       token,
     }),
+  getAnnotations: (connectorId: string, toolId: string, token: string) =>
+    request<{
+      derived: ToolAnnotations;
+      override: ToolAnnotations | null;
+      effective: ToolAnnotations;
+      supportedKeys: string[];
+    }>(`/api/connectors/${connectorId}/tools/${toolId}/annotations`, { token }),
+  setAnnotations: (
+    connectorId: string,
+    toolId: string,
+    annotations: ToolAnnotations | null,
+    token: string,
+  ) =>
+    request<{ override: ToolAnnotations | null; effective: ToolAnnotations }>(
+      `/api/connectors/${connectorId}/tools/${toolId}/annotations`,
+      { method: 'PATCH', body: { annotations }, token },
+    ),
+  getResponseMapping: (connectorId: string, toolId: string, token: string) =>
+    request<{
+      transform: ResponseTransform | null;
+      active: boolean;
+      sampleAvailable: boolean;
+      sampleCapturedAt: string | null;
+    }>(`/api/connectors/${connectorId}/tools/${toolId}/response-mapping`, { token }),
+  setResponseMapping: (
+    connectorId: string,
+    toolId: string,
+    transform: ResponseTransform | null,
+    token: string,
+  ) =>
+    request<{ transform: ResponseTransform | null; active: boolean }>(
+      `/api/connectors/${connectorId}/tools/${toolId}/response-mapping`,
+      { method: 'PATCH', body: { transform }, token },
+    ),
+  /** Dry-run a mapping against a sample (or the last real response). No API call. */
+  previewMapping: (
+    connectorId: string,
+    toolId: string,
+    body: { transform?: ResponseTransform | null; sample?: unknown },
+    token: string,
+  ) =>
+    request<MappingPreview>(
+      `/api/connectors/${connectorId}/tools/${toolId}/preview-mapping`,
+      { method: 'POST', body, token },
+    ),
   delete: (connectorId: string, toolId: string, token: string) =>
     request(`/api/connectors/${connectorId}/tools/${toolId}`, { method: 'DELETE', token }),
-  test: (connectorId: string, toolId: string, params: Record<string, unknown>, token: string) =>
-    request<{ ok: boolean; durationMs: number; result?: unknown; error?: string }>(
-      `/api/connectors/${connectorId}/tools/${toolId}/test`,
-      { method: 'POST', body: { params }, token },
-    ),
+  test: (
+    connectorId: string,
+    toolId: string,
+    params: Record<string, unknown>,
+    token: string,
+    transform?: ResponseTransform | null,
+  ) =>
+    request<ToolTestResult>(`/api/connectors/${connectorId}/tools/${toolId}/test`, {
+      method: 'POST',
+      // MCP-standard field name; `params` is still sent for older backends.
+      body: { arguments: params, params, ...(transform ? { transform } : {}) },
+      token,
+    }),
 };
 
 // Audit

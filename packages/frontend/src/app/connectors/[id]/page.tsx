@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
-import { connectors, tools } from '@/lib/api';
+import { connectors, tools, type ToolTestResult } from '@/lib/api';
 import { findDemoByTool } from '@/lib/demo-connectors';
 import { ToolEditor } from '@/components/tool-editor';
 import { McpAssignModal } from '@/components/mcp-assign-modal';
@@ -17,6 +17,7 @@ import { Badge, StatusPill } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { AccessDenied } from '@/components/access-denied';
 import { getCapabilities } from '@/lib/capabilities';
+import { ToolAnnotationsEditor } from '@/components/tool-annotations-editor';
 
 const IMPORT_SOURCES = [
   { id: 'openapi', label: 'OpenAPI / Swagger', placeholder: 'Paste OpenAPI JSON/YAML or enter URL...' },
@@ -29,6 +30,12 @@ const IMPORT_SOURCES = [
 ];
 
 const EDIT_DEFAULT_LOGIN_BODY = '{\n  "username": "${username}",\n  "password": "${password}"\n}';
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
 
 export default function ConnectorDetailPage() {
   const { token, user, isLoading: authLoading } = useAuth();
@@ -43,6 +50,8 @@ export default function ConnectorDetailPage() {
   // Whether CONNECTOR_PROXY_URL is configured on this instance — drives
   // visibility of the per-tool "Use proxy" checkbox.
   const [proxyAvailable, setProxyAvailable] = useState(false);
+  // Tool whose MCP hints (annotations) panel is expanded, if any.
+  const [hintsToolId, setHintsToolId] = useState<string | null>(null);
 
   // OAuth + MCP discovery
   const [authorizing, setAuthorizing] = useState(false);
@@ -56,6 +65,14 @@ export default function ConnectorDetailPage() {
   const [editAuthMode, setEditAuthMode] = useState<'SHARED' | 'PER_USER'>('SHARED');
   const [editAuthKey, setEditAuthKey] = useState('');
   const [editAuthValue, setEditAuthValue] = useState('');
+  // OAuth2 only: how client credentials reach the token endpoint.
+  const [editTokenAuthMethod, setEditTokenAuthMethod] = useState('client_secret_post');
+  // OAuth2 endpoints. Editable because a connector switched to OAUTH2 after
+  // creation has none, and could otherwise never be authorized
+  // ("No authorization URL configured for this connector").
+  const [editOauthAuthUrl, setEditOauthAuthUrl] = useState('');
+  const [editOauthTokenUrl, setEditOauthTokenUrl] = useState('');
+  const [editOauthScopes, setEditOauthScopes] = useState('');
   // LOGIN_TOKEN (credentials → short-lived token, auto-refreshed) fields
   const [editLtLoginUrl, setEditLtLoginUrl] = useState('');
   const [editLtMethod, setEditLtMethod] = useState('POST');
@@ -86,7 +103,10 @@ export default function ConnectorDetailPage() {
   const [testingToolId, setTestingToolId] = useState<string | null>(null);
   const [testParams, setTestParams] = useState('{}');
   const [testRunning, setTestRunning] = useState(false);
-  const [toolTestResult, setToolTestResult] = useState<{ ok: boolean; durationMs: number; result?: unknown; error?: string; [key: string]: unknown } | null>(null);
+  const [toolTestResult, setToolTestResult] = useState<ToolTestResult | null>(null);
+  // Which side of a mapped response the playground shows. Defaults to what an
+  // AI client would actually receive.
+  const [testResponseView, setTestResponseView] = useState<'mapped' | 'raw'>('mapped');
 
   // Import modal
   const [showImport, setShowImport] = useState(false);
@@ -124,6 +144,20 @@ export default function ConnectorDetailPage() {
       // Don't pre-fill credentials — they are encrypted on the server
       setEditAuthKey('');
       setEditAuthValue('');
+      // The auth method is not secret, so it can be shown. Without this the
+      // select would always read "body" and saving any other field would
+      // silently reset a connector configured for HTTP Basic.
+      if (c.authType === 'OAUTH2' && c.type !== 'MCP') {
+        connectors
+          .getOAuthConfig(id, token)
+          .then((r) => {
+            setEditTokenAuthMethod(r.tokenAuthMethod || 'client_secret_post');
+            setEditOauthAuthUrl(r.authorizationUrl || '');
+            setEditOauthTokenUrl(r.tokenUrl || '');
+            setEditOauthScopes(r.scopes || '');
+          })
+          .catch(() => setEditTokenAuthMethod('client_secret_post'));
+      }
       // authConfig is encrypted server-side, so LOGIN_TOKEN fields start empty;
       // headers are stored in the clear and can be pre-filled for editing.
       setEditLtPassword('');
@@ -228,6 +262,27 @@ export default function ConnectorDetailPage() {
         data.config = { readOnly: editDbReadOnly };
       }
       await connectors.update(id, data, token);
+
+      // OAuth2 credentials live in authConfig alongside the issued tokens, so
+      // they are patched separately (a full write would discard the tokens and
+      // the endpoints captured during authorization).
+      if (editAuthType === 'OAUTH2' && connector.type !== 'MCP') {
+        const oauthPatch: Record<string, string> = {
+          tokenAuthMethod:
+            editTokenAuthMethod === 'client_secret_basic'
+              ? 'client_secret_basic'
+              : '',
+        };
+        if (editAuthKey) oauthPatch.clientId = editAuthKey;
+        if (editAuthValue) oauthPatch.clientSecret = editAuthValue;
+        // Endpoints are not secret, so the form always holds their current
+        // value and can round-trip them.
+        oauthPatch.authorizationUrl = editOauthAuthUrl.trim();
+        oauthPatch.tokenUrl = editOauthTokenUrl.trim();
+        oauthPatch.scopes = editOauthScopes.trim();
+        await connectors.updateOAuthConfig(id, oauthPatch, token);
+      }
+
       setMsg('Connector updated');
       setEditing(false);
       fetchConnector();
@@ -355,6 +410,7 @@ export default function ConnectorDetailPage() {
     if (!token) return;
     setTestRunning(true);
     setToolTestResult(null);
+    setTestResponseView('mapped');
     try {
       const params =
         paramsOverride !== undefined ? paramsOverride : JSON.parse(testParams);
@@ -788,8 +844,37 @@ export default function ConnectorDetailPage() {
                       <input type="password" value={editAuthValue} onChange={(e) => setEditAuthValue(e.target.value)} placeholder="Leave empty to keep current" className="w-full border border-[var(--border)] rounded-[9px] px-3 py-2 text-sm bg-[var(--surface)] focus:outline-none focus:border-[var(--border-strong)]" />
                     </div>
                   </div>
+                  <div>
+                    <label className="block text-sm font-medium mb-1">Authorization URL</label>
+                    <input type="text" value={editOauthAuthUrl} onChange={(e) => setEditOauthAuthUrl(e.target.value)} placeholder="https://provider.com/oauth/authorize" className="w-full border border-[var(--border)] rounded-[9px] px-3 py-2 text-sm bg-[var(--surface)] focus:outline-none focus:border-[var(--border-strong)] font-mono text-[13px]" />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium mb-1">Token URL</label>
+                    <input type="text" value={editOauthTokenUrl} onChange={(e) => setEditOauthTokenUrl(e.target.value)} placeholder="https://provider.com/oauth/token" className="w-full border border-[var(--border)] rounded-[9px] px-3 py-2 text-sm bg-[var(--surface)] focus:outline-none focus:border-[var(--border-strong)] font-mono text-[13px]" />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium mb-1">Scopes</label>
+                    <input type="text" value={editOauthScopes} onChange={(e) => setEditOauthScopes(e.target.value)} placeholder="read write (space-separated, optional)" className="w-full border border-[var(--border)] rounded-[9px] px-3 py-2 text-sm bg-[var(--surface)] focus:outline-none focus:border-[var(--border-strong)] font-mono text-[13px]" />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium mb-1">Token endpoint authentication</label>
+                    <select
+                      value={editTokenAuthMethod}
+                      onChange={(e) => setEditTokenAuthMethod(e.target.value)}
+                      className="w-full border border-[var(--border)] rounded-[9px] px-3 py-2 text-sm bg-[var(--surface)] focus:outline-none focus:border-[var(--border-strong)]"
+                    >
+                      <option value="client_secret_post">Client secret in body (default)</option>
+                      <option value="client_secret_basic">HTTP Basic header (client_secret_basic)</option>
+                    </select>
+                    <p className="mt-1 text-xs text-[var(--text-3)]">
+                      Switch to HTTP Basic if the token exchange fails with 401 — Datto RMM
+                      and DATEV require it. Applies to refreshes too. Re-authorize after changing it.
+                    </p>
+                  </div>
                   <p className="text-xs text-[var(--text-3)]">
-                    Leave credential fields empty to keep the current values. Authorization URL, Token URL, and Scopes are preserved from initial setup.
+                    Leave Client ID / Client Secret empty to keep the stored values. Endpoints
+                    are shown as configured and can be corrected here — useful when a connector
+                    was switched to OAuth2 after creation and has none yet.
                   </p>
                 </div>
               )}
@@ -1132,11 +1217,16 @@ export default function ConnectorDetailPage() {
                     <ToolEditor
                       connectorType={connector.type}
                       envVarKeys={new Set(envVarEntries.map((e) => e.key.trim()).filter(Boolean))}
+                      connectorId={id}
+                      toolId={tool.id}
                       existingTool={{
                         name: tool.name,
                         description: tool.description,
                         parameters: tool.parameters || { type: 'object', properties: {} },
                         endpointMapping: tool.endpointMapping || { method: 'GET', path: '/' },
+                        // Without this the editor starts from an empty mapping
+                        // and wipes cacheTtl / followUp / transform on save.
+                        responseMapping: tool.responseMapping || undefined,
                       }}
                       onSave={(data) => handleUpdateTool(tool.id, data)}
                       onCancel={() => setEditingToolId(null)}
@@ -1163,6 +1253,15 @@ export default function ConnectorDetailPage() {
                                 title={`Removed from the source spec on ${new Date(tool.deprecatedAt).toLocaleString()}. Role assignments and history are preserved.`}
                               >
                                 deprecated
+                              </Badge>
+                            )}
+                            {tool.responseMapping?.transform && (
+                              <Badge
+                                tone="info"
+                                className="flex-shrink-0"
+                                title="A response mapping shapes this tool's output before it reaches the AI client. Edit it under Response Mapping."
+                              >
+                                mapped
                               </Badge>
                             )}
                           </div>
@@ -1234,6 +1333,15 @@ export default function ConnectorDetailPage() {
                             Edit
                           </button>
                           <button
+                            onClick={() =>
+                              setHintsToolId(hintsToolId === tool.id ? null : tool.id)
+                            }
+                            title="MCP annotations — tells agents whether this tool is read-only, destructive, idempotent."
+                            className="inline-flex items-center justify-center rounded-[7px] border border-[var(--border)] bg-[var(--surface)] text-[var(--text-2)] px-2.5 py-1 text-xs font-medium transition-colors hover:border-[var(--border-strong)] hover:text-[var(--text)]"
+                          >
+                            {hintsToolId === tool.id ? 'Close hints' : 'Hints'}
+                          </button>
+                          <button
                             onClick={() => handleToggleTool(tool.id, tool.isEnabled)}
                             className="inline-flex items-center justify-center rounded-[7px] border border-[var(--border)] bg-[var(--surface)] text-[var(--text-2)] px-2.5 py-1 text-xs font-medium transition-colors hover:border-[var(--border-strong)] hover:text-[var(--text)]"
                           >
@@ -1261,6 +1369,16 @@ export default function ConnectorDetailPage() {
                           </button>
                         </div>
                       </div>
+
+                      {/* MCP annotations (hints) */}
+                      {hintsToolId === tool.id && (
+                        <div className="mt-3 pt-3 border-t border-[var(--border)]">
+                          <ToolAnnotationsEditor
+                            connectorId={id}
+                            toolId={tool.id}
+                          />
+                        </div>
+                      )}
 
                       {/* Tool Playground */}
                       {testingToolId === tool.id && (() => {
@@ -1304,6 +1422,44 @@ export default function ConnectorDetailPage() {
                                   </span>
                                 )}
                               </label>
+                              {/* Raw vs mapped, so the effect of a response
+                                  mapping (and its token saving) is visible
+                                  right where the tool is exercised. */}
+                              {toolTestResult?.ok && toolTestResult.mappingApplied === true && (
+                                <div className="flex items-center gap-2 mb-1 flex-wrap">
+                                  {(['mapped', 'raw'] as const).map((view) => (
+                                    <button
+                                      key={view}
+                                      onClick={() => setTestResponseView(view)}
+                                      className={cn(
+                                        'rounded-[7px] border px-2 py-0.5 text-[11px] font-medium transition-colors',
+                                        testResponseView === view
+                                          ? 'border-[var(--brand)] bg-[var(--brand-tint)] text-[var(--brand)]'
+                                          : 'border-[var(--border)] bg-[var(--surface)] text-[var(--text-2)]',
+                                      )}
+                                    >
+                                      {view === 'mapped' ? 'Mapped (what the AI sees)' : 'Raw API response'}
+                                    </button>
+                                  ))}
+                                  <span className="text-[11px] text-[var(--text-3)]">
+                                    {formatBytes(Number(toolTestResult.rawBytes) || 0)} →{' '}
+                                    {formatBytes(Number(toolTestResult.mappedBytes) || 0)} (
+                                    {Number(toolTestResult.bytesSavedPct) > 0 ? '−' : ''}
+                                    {Math.abs(Number(toolTestResult.bytesSavedPct) || 0)}%)
+                                  </span>
+                                </div>
+                              )}
+                              {toolTestResult?.ok && typeof toolTestResult.mappingError === 'string' && (
+                                <div className="mb-2 rounded-[9px] border border-[var(--t-warn-bg)] bg-[var(--t-warn-bg)] px-3 py-2 text-xs text-[var(--t-warn-fg)]">
+                                  Response mapping failed ({String(toolTestResult.mappingError)}) — the
+                                  raw response is being returned. Fix it under Edit → Response Mapping.
+                                </div>
+                              )}
+                              {toolTestResult && typeof toolTestResult.note === 'string' && (
+                                <div className="mt-2 rounded-[9px] border border-[var(--t-info-fg)]/20 bg-[var(--t-info-bg)] px-3 py-2 text-xs text-[var(--t-info-fg)]">
+                                  {toolTestResult.note}
+                                </div>
+                              )}
                               {toolTestResult && !toolTestResult.ok && typeof toolTestResult.hint === 'string' && (
                                 <div
                                   className="mb-2 p-2 rounded-[9px] text-xs border"
@@ -1328,7 +1484,14 @@ export default function ConnectorDetailPage() {
                               <pre className="w-full border border-[var(--border)] rounded-[9px] px-3 py-2 text-xs bg-[var(--surface-2)] font-mono overflow-auto max-h-40 min-h-[8rem]">
                                 {toolTestResult
                                   ? toolTestResult.ok
-                                    ? JSON.stringify(toolTestResult.result, null, 2)
+                                    ? JSON.stringify(
+                                        toolTestResult.mappingApplied === true &&
+                                          testResponseView === 'mapped'
+                                          ? toolTestResult.mapped
+                                          : toolTestResult.result,
+                                        null,
+                                        2,
+                                      )
                                     : JSON.stringify(toolTestResult, null, 2)
                                   : 'Click "Run Test" to execute this tool...'}
                               </pre>

@@ -29,33 +29,10 @@ function makeService(prismaOverrides: Record<string, any> = {}) {
 
 describe('ConnectorAuthorizationsService', () => {
   describe('listForUser', () => {
-    it('returns only connectors assigned to this user (direct or via role), deduped', async () => {
+    it('returns only PER_USER connectors assigned to this user (direct or via role), deduped; excludes Global/SHARED connectors', async () => {
       const { service, prisma } = makeService();
       prisma.user.findUnique.mockResolvedValue({ mcpRoleId: 'role-1' });
       prisma.connectorAuthorizationAssignment.findMany.mockResolvedValue([
-        {
-          connectorId: 'conn-1',
-          connector: {
-            id: 'conn-1',
-            name: 'Shared CRM',
-            type: 'REST',
-            authMode: ConnectorAuthMode.SHARED,
-            instructions: null,
-            userAuthorizations: [],
-          },
-        },
-        {
-          // Same connector assigned both directly and via role — must not duplicate.
-          connectorId: 'conn-1',
-          connector: {
-            id: 'conn-1',
-            name: 'Shared CRM',
-            type: 'REST',
-            authMode: ConnectorAuthMode.SHARED,
-            instructions: null,
-            userAuthorizations: [],
-          },
-        },
         {
           connectorId: 'conn-2',
           connector: {
@@ -71,11 +48,11 @@ describe('ConnectorAuthorizationsService', () => {
         },
       ]);
 
+      // The query now filters to PER_USER connectors only, so Global/SHARED
+      // connectors never reach the mapping (they stay invisible to non-admins).
       const result = await service.listForUser('user-1', 'org-1');
 
-      expect(result).toHaveLength(2);
-      const shared = result.find((r) => r.connectorId === 'conn-1')!;
-      expect(shared.status).toBe(UserConnectorAuthorizationStatus.AUTHORIZED);
+      expect(result).toHaveLength(1);
       const perUser = result.find((r) => r.connectorId === 'conn-2')!;
       expect(perUser.status).toBe(UserConnectorAuthorizationStatus.AUTHORIZED);
       expect(perUser.authMode).toBe(ConnectorAuthMode.PER_USER);

@@ -45,8 +45,13 @@ export class ConnectorAuthorizationsService {
   }
 
   /**
-   * List connectors assigned to this user, either directly or via their MCP
-   * role, with sanitized fields only (no base URL, headers, auth config).
+   * List connectors this user must (or may) self-authorize — i.e. PER_USER
+   * connectors assigned to them directly or via their MCP role — with
+   * sanitized fields only (no base URL, headers, auth config).
+   *
+   * Global (SHARED) connectors are intentionally NOT listed here: everyone in
+   * the organization can already call their tools through the admin-managed
+   * shared credential, so there is nothing for a non-admin to act on.
    */
   async listForUser(
     userId: string,
@@ -61,6 +66,7 @@ export class ConnectorAuthorizationsService {
       where: {
         organizationId,
         enabled: true,
+        connector: { authMode: ConnectorAuthMode.PER_USER },
         OR: [
           { userId },
           ...(user?.mcpRoleId ? [{ roleId: user.mcpRoleId }] : []),
@@ -83,20 +89,6 @@ export class ConnectorAuthorizationsService {
 
     return [...byConnectorId.values()].map((a) => {
       const connector = a.connector;
-      if (connector.authMode === ConnectorAuthMode.SHARED) {
-        return {
-          connectorId: connector.id,
-          name: connector.name,
-          type: connector.type,
-          authMode: connector.authMode,
-          icon: null,
-          instructions: connector.instructions,
-          status: UserConnectorAuthorizationStatus.AUTHORIZED,
-          lastError: null,
-          authorizedAt: null,
-        };
-      }
-
       const userAuth = connector.userAuthorizations[0];
       return {
         connectorId: connector.id,

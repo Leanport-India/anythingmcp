@@ -791,14 +791,14 @@ export default function ConnectorDetailPage() {
                     onValueChange={(v) => setEditAuthMode(v as 'SHARED' | 'PER_USER')}
                     className="w-full border border-[var(--border)] rounded-[9px] px-3 py-2 text-sm bg-[var(--surface)] focus:outline-none focus:border-[var(--border-strong)]"
                     options={[
-                      { value: 'SHARED', label: 'Admin authorizes once — shared by everyone' },
-                      { value: 'PER_USER', label: 'Each user authorizes with their own account' },
+                      { value: 'SHARED', label: 'Global — one admin credential for all users' },
+                      { value: 'PER_USER', label: 'Per User — each user authorizes their own account' },
                     ]}
                   />
                   <p className="text-xs text-[var(--text-3)] mt-1.5">
                     {editAuthMode === 'PER_USER'
                       ? "Each assigned user connects their own account from My Connections. No one's data or tokens are shared with anyone else."
-                      : 'You authorize once below; every assigned user shares this same credential.'}
+                      : 'You authorize once below; the connector is shared with every user in the organization. Non-admin users can call its tools without seeing the connector in their UI.'}
                   </p>
                 </div>
               )}
@@ -1036,7 +1036,9 @@ export default function ConnectorDetailPage() {
           </Card>
         )}
 
-        <ConnectorAuthorizationAssignments connectorId={id} />
+        {connector.authMode === 'PER_USER' && (
+          <ConnectorAuthorizationAssignments connectorId={id} />
+        )}
 
         {/* Environment Variables */}
         <Card className="p-[22px]">

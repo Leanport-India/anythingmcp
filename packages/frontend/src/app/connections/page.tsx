@@ -134,9 +134,6 @@ export default function MyConnectionsPage() {
                   <StatusPill tone={STATUS_TONE[item.status]}>
                     {STATUS_LABEL[item.status]}
                   </StatusPill>
-                  {item.authMode === 'SHARED' && (
-                    <StatusPill tone="info">Shared by admin</StatusPill>
-                  )}
                 </div>
                 {item.instructions && (
                   <p className="mt-1 text-[12.5px] text-[var(--text-3)]">{item.instructions}</p>

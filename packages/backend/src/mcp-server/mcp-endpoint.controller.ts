@@ -825,47 +825,81 @@ export class McpEndpointController {
     const shape: Record<string, z.ZodType> = {};
 
     for (const [key, prop] of Object.entries(properties)) {
-      let zodType: z.ZodType;
-
-      switch (prop.type) {
-        case 'string':
-          zodType = prop.enum
-            ? z.enum(prop.enum as [string, ...string[]])
-            : z.string();
-          break;
-        case 'number':
-        case 'integer':
-          zodType = z.number();
-          break;
-        case 'boolean':
-          zodType = z.boolean();
-          break;
-        case 'array':
-          zodType = z.array(z.any());
-          break;
-        case 'object':
-          zodType = z.record(z.string(), z.any());
-          break;
-        default:
-          zodType = z.any();
-      }
-
-      if (prop.description) {
-        zodType = zodType.describe(prop.description);
-      }
-
-      if (prop.default !== undefined) {
-        zodType = zodType.default(prop.default);
-      }
+      shape[key] = this.jsonSchemaPropToZod(prop, 0);
 
       if (!required.includes(key)) {
-        zodType = zodType.optional();
+        shape[key] = shape[key].optional();
       }
-
-      shape[key] = zodType;
     }
 
     return shape;
+  }
+
+  private jsonSchemaPropToZod(prop: any, depth: number): z.ZodType {
+    if (!prop || depth > 6) return z.any();
+
+    // Handle nested allOf: merge all branches into a single zod object
+    if (prop.allOf && Array.isArray(prop.allOf)) {
+      const merged: Record<string, any> = {};
+      const req = new Set<string>();
+      for (const branch of prop.allOf) {
+        const resolved = branch?.$ref ? branch : branch;
+        if (resolved?.properties) {
+          for (const [k, v] of Object.entries(resolved.properties)) {
+            if (!merged[k]) merged[k] = this.jsonSchemaPropToZod(v, depth + 1);
+          }
+        }
+        if (Array.isArray(resolved?.required)) {
+          for (const r of resolved.required) req.add(r);
+        }
+      }
+      if (Object.keys(merged).length === 0) return z.any();
+      const fields: Record<string, z.ZodType> = {};
+      for (const [k, v] of Object.entries(merged)) {
+        fields[k] = req.has(k) ? v : v.optional();
+      }
+      return z.object(fields).passthrough();
+    }
+
+    // Handle oneOf/anyOf: pick the first branch
+    const combo = prop.oneOf?.[0] || prop.anyOf?.[0];
+    if (combo) {
+      return this.jsonSchemaPropToZod(combo, depth + 1);
+    }
+
+    switch (prop.type) {
+      case 'string':
+        return prop.enum
+          ? z.enum(prop.enum as [string, ...string[]])
+          : z.string();
+      case 'number':
+      case 'integer':
+        return z.number();
+      case 'boolean':
+        return z.boolean();
+      case 'array': {
+        const items = prop.items
+          ? this.jsonSchemaPropToZod(prop.items, depth + 1)
+          : z.any();
+        return z.array(items);
+      }
+      case 'object': {
+        if (prop.properties && typeof prop.properties === 'object') {
+          const fields: Record<string, z.ZodType> = {};
+          const objRequired = new Set<string>(prop.required || []);
+          for (const [k, v] of Object.entries(prop.properties)) {
+            fields[k] = this.jsonSchemaPropToZod(v, depth + 1);
+            if (!objRequired.has(k)) {
+              fields[k] = fields[k].optional();
+            }
+          }
+          return z.object(fields).passthrough();
+        }
+        return z.record(z.string(), z.any());
+      }
+      default:
+        return z.any();
+    }
   }
 
   /**

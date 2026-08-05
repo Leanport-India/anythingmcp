@@ -678,7 +678,14 @@ export class ConnectorsController {
   ) {
     const connector = await this.connectorsService.findById(id);
     this.assertCanWrite(connector, req);
-    return this.connectorsService.update(id, dto);
+    const updated = await this.connectorsService.update(id, dto);
+    // Reload the MCP tool registry so callers (e.g. Claude) pick up the edited
+    // authConfig/baseUrl/headers instead of the stale cached copy captured when
+    // the connector's tools were last loaded. Without this, an auth/credential
+    // edit that fixes the connector for AnythingMCP (which reads the DB fresh)
+    // is still invisible to MCP clients hitting the cached registry.
+    await this.mcpServer.reloadConnectorTools(id);
+    return updated;
   }
 
   @Get(':id/oauth-config')

@@ -199,6 +199,18 @@ export const connectors = {
       hasAccessToken: boolean;
       hasRefreshToken: boolean;
     }>(`/api/connectors/${id}/oauth-config`, { token }),
+  /** Non-secret LOGIN_TOKEN settings, for pre-filling the edit form. */
+  getLoginTokenConfig: (id: string, token: string) =>
+    request<{
+      loginUrl: string;
+      loginMethod: string;
+      loginBody: unknown;
+      username: string;
+      tokenJsonPath: string;
+      tokenTTLSeconds: number | null;
+      refreshOn401: boolean;
+      hasPassword: boolean;
+    }>(`/api/connectors/${id}/login-token-config`, { token }),
   /**
    * Partial update of the OAuth2 settings. Merges server-side, so editing one
    * field keeps the stored tokens and the rest of the configuration intact.

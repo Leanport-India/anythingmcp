@@ -158,8 +158,29 @@ export default function ConnectorDetailPage() {
           })
           .catch(() => setEditTokenAuthMethod('client_secret_post'));
       }
-      // authConfig is encrypted server-side, so LOGIN_TOKEN fields start empty;
-      // headers are stored in the clear and can be pre-filled for editing.
+      // authConfig is encrypted server-side, so LOGIN_TOKEN fields are filled
+      // from a dedicated non-secret endpoint (password never leaves the server).
+      // Headers are stored in the clear and can be pre-filled for editing.
+      if (c.authType === 'LOGIN_TOKEN') {
+        connectors
+          .getLoginTokenConfig(id, token)
+          .then((r) => {
+            setEditLtLoginUrl(r.loginUrl || '');
+            setEditLtMethod(r.loginMethod || 'POST');
+            setEditLtUsername(r.username || '');
+            setEditLtTokenPath(r.tokenJsonPath || 'token');
+            setEditLtTtl(r.tokenTTLSeconds != null ? String(r.tokenTTLSeconds) : '');
+            setEditLtRefreshOn401(r.refreshOn401);
+            setEditLtLoginBody(
+              typeof r.loginBody === 'string'
+                ? r.loginBody
+                : r.loginBody
+                  ? JSON.stringify(r.loginBody, null, 2)
+                  : EDIT_DEFAULT_LOGIN_BODY,
+            );
+          })
+          .catch(() => {});
+      }
       setEditLtPassword('');
       setEditHeaderRows(objectToHeaderRows(c.headers as Record<string, string> | null));
       setEditDbReadOnly((c.config as any)?.readOnly !== false);

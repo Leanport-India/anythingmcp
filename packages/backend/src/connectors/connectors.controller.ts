@@ -715,6 +715,60 @@ export class ConnectorsController {
     };
   }
 
+  @Get(':id/login-token-config')
+  @ApiOperation({
+    summary: 'Read the non-secret LOGIN_TOKEN settings of a connector',
+    description:
+      'Returns the login URL, method, request body, username, token JSON path ' +
+      'and TTL so the UI can pre-fill the edit form. The password is never ' +
+      'returned — only a boolean saying whether one is set.',
+  })
+  async getLoginTokenConfig(@Req() req: any, @Param('id') id: string) {
+    const connector = await this.connectorsService.findById(id);
+    this.assertOrgMatch(connector, req);
+
+    if (connector.authType !== 'LOGIN_TOKEN') {
+      return {
+        loginUrl: '',
+        loginMethod: 'POST',
+        loginBody: null,
+        username: '',
+        tokenJsonPath: 'token',
+        tokenTTLSeconds: null,
+        refreshOn401: true,
+        hasPassword: false,
+      };
+    }
+
+    let cfg: Record<string, unknown> = {};
+    if (connector.authConfig) {
+      try {
+        cfg = JSON.parse(decrypt(connector.authConfig, this.encryptionKey));
+      } catch {
+        // Unreadable config (e.g. rotated key) — report it as empty rather
+        // than failing the page load.
+      }
+    }
+    const str = (v: unknown) => (typeof v === 'string' ? v : '');
+    const body =
+      cfg.loginBody !== undefined
+        ? cfg.loginBody
+        : cfg.loginBodyTemplate !== undefined
+          ? str(cfg.loginBodyTemplate)
+          : null;
+    return {
+      loginUrl: str(cfg.loginUrl),
+      loginMethod: str(cfg.loginMethod) || 'POST',
+      loginBody: body,
+      username: str(cfg.username),
+      tokenJsonPath: str(cfg.tokenJsonPath) || 'token',
+      tokenTTLSeconds:
+        typeof cfg.tokenTTLSeconds === 'number' ? cfg.tokenTTLSeconds : null,
+      refreshOn401: cfg.refreshOn401 !== false,
+      hasPassword: !!cfg.password,
+    };
+  }
+
   @Patch(':id/oauth-config')
   @ApiOperation({
     summary: 'Update the OAuth2 settings of a connector (partial)',

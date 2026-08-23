@@ -10,6 +10,8 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { StatusPill } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
+import { AccessDenied } from '@/components/access-denied';
+import { getCapabilities } from '@/lib/capabilities';
 
 const SOURCES = ['STATIC', 'OBSERVED', 'MANUAL', 'LLM'] as const;
 const KIND_LABEL: Record<string, string> = {
@@ -34,7 +36,8 @@ const sectionLabelClass =
   'text-[10.5px] font-semibold uppercase tracking-[0.05em] text-[var(--text-3)]';
 
 export default function KnowledgeGraphPage() {
-  const { token, user } = useAuth();
+  const { token, user, isLoading: authLoading } = useAuth();
+  const capabilities = getCapabilities(user);
   const [nodes, setNodes] = useState<KgNode[]>([]);
   const [edges, setEdges] = useState<KgEdge[]>([]);
   const [lastBuiltAt, setLastBuiltAt] = useState<string | null>(null);
@@ -56,7 +59,7 @@ export default function KnowledgeGraphPage() {
   const isAdmin = user?.role === 'ADMIN';
 
   const load = useCallback(() => {
-    if (!token) return;
+    if (!token || !capabilities.canManageKnowledgeGraph) return;
     setLoading(true);
     knowledgeGraph
       .get(token)
@@ -68,20 +71,20 @@ export default function KnowledgeGraphPage() {
       })
       .catch((e) => setStatus(e.message || 'Failed to load graph'))
       .finally(() => setLoading(false));
-  }, [token]);
+  }, [token, capabilities.canManageKnowledgeGraph]);
 
   useEffect(() => {
     load();
   }, [load]);
 
   useEffect(() => {
-    if (!token) return;
+    if (!token || !capabilities.canManageKnowledgeGraph) return;
     knowledgeGraph.getSettings(token).then((s) => setLlmEnabled(s.llmEnabled)).catch(() => {});
     connectorsApi
       .list(token)
       .then((c: any[]) => setConnectorList(c.map((x) => ({ id: x.id, name: x.name }))))
       .catch(() => {});
-  }, [token]);
+  }, [token, capabilities.canManageKnowledgeGraph]);
 
   const enrich = async () => {
     if (!token) return;
@@ -224,6 +227,9 @@ export default function KnowledgeGraphPage() {
       setStatus(e.message || 'Create failed');
     }
   };
+
+  if (authLoading) return null;
+  if (!capabilities.canManageKnowledgeGraph) return <AccessDenied />;
 
   return (
     <AppShell

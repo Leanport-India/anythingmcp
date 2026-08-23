@@ -35,7 +35,10 @@ function makeController(overrides: {
     findByIdInternal: jest.fn().mockResolvedValue({
       baseUrl: 'https://accounting-clients.api.datev.de/platform-sandbox/v2',
       headers: {},
+      organizationId: 'org-1',
     }),
+    getDecryptedAuthConfig: jest.fn().mockReturnValue({}),
+    update: jest.fn().mockResolvedValue(undefined),
   };
   const mcpClientEngine: any = {
     listTools: overrides.listToolsThrows
@@ -46,9 +49,15 @@ function makeController(overrides: {
   const mcpServer: any = { reloadConnectorTools };
   const configService: any = { get: jest.fn().mockReturnValue('https://cloud.example.com') };
 
+  const connectorAuth: any = {
+    saveUserCredential: jest.fn().mockResolvedValue(undefined),
+    recordUserAuthError: jest.fn().mockResolvedValue(undefined),
+  };
+
   const controller = new McpOAuthCallbackController(
     mcpOAuthService,
     connectorsService,
+    connectorAuth,
     mcpClientEngine,
     prisma,
     mcpServer,

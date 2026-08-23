@@ -178,3 +178,251 @@ describe('McpEndpointController — tenant isolation', () => {
     expect(res.status).not.toHaveBeenCalledWith(403);
   });
 });
+
+/**
+ * structuredContent is what an MCP client parses when a tool advertises an
+ * outputSchema. It used to be rebuilt by re-parsing content[0].text, which
+ * silently produced {} for every tool carrying a followUp workflow hint (the
+ * appended text is not JSON). The executor now hands back the object directly.
+ */
+describe('McpEndpointController — structuredContent', () => {
+  const TOOL = {
+    id: 't1',
+    name: 'list_devices',
+    description: 'List devices',
+    parameters: { type: 'object', properties: {} },
+    connectorType: 'REST',
+    connectorConfig: { envVars: {} },
+    endpointMapping: { method: 'GET', path: '/devices' },
+    outputSchema: { type: 'object', properties: { total: {}, devices: {} } },
+  };
+
+  function planHandler(executeResult: any) {
+    const toolExecutor = { executeTool: jest.fn().mockResolvedValue(executeResult) };
+    const controller = new McpEndpointController(
+      { findById: jest.fn() } as any,
+      { getAllTools: jest.fn().mockReturnValue([]) } as any,
+      toolExecutor as any,
+      { getAllowedToolIds: jest.fn() } as any,
+      { lookup: jest.fn(), isEnabled: jest.fn(), captureIntentEnabled: jest.fn() } as any,
+      { get: jest.fn(), add: jest.fn(), remove: jest.fn() } as any,
+    );
+
+    const entries = (controller as any).planToolSet({
+      serverTools: [TOOL],
+      allowedToolIds: null,
+      captureIntent: false,
+      invocationContext: { organizationId: 'org-A', mcpServerId: 'srv-A' },
+    });
+
+    let handler: any;
+    const fakeMcpServer = {
+      registerTool: (_n: string, _c: unknown, h: any) => {
+        handler = h;
+        return {};
+      },
+    };
+    entries.find((e: any) => e.name === 'list_devices').register(fakeMcpServer);
+    return handler;
+  }
+
+  it('uses the executor object, so a followUp hint no longer empties it', async () => {
+    const mapped = { total: 812, devices: [{ hostname: 'PC-01' }] };
+    const handler = planHandler({
+      content: [
+        {
+          type: 'text',
+          text: `${JSON.stringify(mapped, null, 2)}\n\n---\nWORKFLOW HINT: call get_device next`,
+        },
+      ],
+      structured: mapped,
+    });
+
+    const result = await handler({});
+    expect(result.structuredContent).toEqual(mapped);
+    // Our transport field must not leak into the MCP result.
+    expect(result).not.toHaveProperty('structured');
+  });
+
+  it('still parses content[0].text when the executor provides no object', async () => {
+    const handler = planHandler({
+      content: [{ type: 'text', text: '{"total": 812}' }],
+    });
+    const result = await handler({});
+    expect(result.structuredContent).toEqual({ total: 812 });
+  });
+
+  it('falls back to {} for a non-object result', async () => {
+    const handler = planHandler({
+      content: [{ type: 'text', text: '[1,2,3]' }],
+      structured: [1, 2, 3],
+    });
+    const result = await handler({});
+    expect(result.structuredContent).toEqual({});
+  });
+
+  it('skips structuredContent on an error result', async () => {
+    const handler = planHandler({
+      content: [{ type: 'text', text: '{"error":"boom"}' }],
+      structured: { error: 'boom' },
+      isError: true,
+    });
+    const result = await handler({});
+    expect(result.structuredContent).toBeUndefined();
+    expect(result).not.toHaveProperty('structured');
+    expect(result.isError).toBe(true);
+  });
+});
+
+/**
+ * Regression: jsonSchemaToZodShape used to flatten arrays to z.any() and
+ * objects to z.record(), discarding items/properties/required/enum. After
+ * the fix it builds proper nested zod types so MCP clients see the full
+ * shape.
+ */
+describe('McpEndpointController — jsonSchemaToZodShape', () => {
+  const makeController = () =>
+    new McpEndpointController(
+      { findById: jest.fn() } as any,
+      { getAllTools: jest.fn().mockReturnValue([]) } as any,
+      { executeTool: jest.fn() } as any,
+      { getAllowedToolIds: jest.fn() } as any,
+      { lookup: jest.fn(), isEnabled: jest.fn(), captureIntentEnabled: jest.fn() } as any,
+      { get: jest.fn(), add: jest.fn(), remove: jest.fn() } as any,
+    );
+
+  it('converts an array-of-objects with required fields and enum', () => {
+    const controller = makeController();
+    const schema = {
+      type: 'object',
+      properties: {
+        changes: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['type', 'fieldPath'],
+            properties: {
+              type: {
+                type: 'string',
+                enum: ['COMPENSATION_CHANGE', 'ROLE_CHANGE'],
+              },
+              fieldPath: { type: 'string' },
+              newValue: { type: 'string' },
+            },
+          },
+        },
+      },
+      required: ['changes'],
+    };
+    const shape = (controller as any).jsonSchemaToZodShape(schema);
+    expect(shape.changes).toBeDefined();
+
+    // Zod 4: arr._def.type === 'array', arr._def.element is the inner type
+    const arrDef = shape.changes._def;
+    expect(arrDef.type).toBe('array');
+
+    // The element should be a ZodObject with type/fieldPath/newValue
+    const innerDef = arrDef.element._def;
+    expect(innerDef.type).toBe('object');
+    expect(innerDef.shape.type).toBeDefined();
+    expect(innerDef.shape.fieldPath).toBeDefined();
+    expect(innerDef.shape.newValue).toBeDefined();
+  });
+
+  it('converts a nested object with required vs optional fields', () => {
+    const controller = makeController();
+    const schema = {
+      type: 'object',
+      properties: {
+        data: {
+          type: 'object',
+          required: ['name'],
+          properties: {
+            name: { type: 'string' },
+            age: { type: 'number' },
+          },
+        },
+      },
+      required: ['data'],
+    };
+    const shape = (controller as any).jsonSchemaToZodShape(schema);
+    expect(shape.data).toBeDefined();
+
+    // Zod 4: obj._def.type === 'object', obj._def.shape is the properties
+    const objDef = shape.data._def;
+    expect(objDef.type).toBe('object');
+    // 'name' should be required (not optional), 'age' should be optional
+    const innerShape = objDef.shape;
+    expect(innerShape.name).toBeDefined();
+    expect(innerShape.age).toBeDefined();
+    // name is required (no optional wrapper), age is optional
+    expect(innerShape.name._def.type).not.toBe('optional');
+    expect(innerShape.age._def.type).toBe('optional');
+  });
+
+  it('converts allOf merged objects with required fields', () => {
+    const controller = makeController();
+    const schema = {
+      type: 'object',
+      properties: {
+        data: {
+          allOf: [
+            {
+              type: 'object',
+              required: ['name'],
+              properties: {
+                name: { type: 'string' },
+              },
+            },
+            {
+              type: 'object',
+              required: ['value'],
+              properties: {
+                value: { type: 'number' },
+              },
+            },
+          ],
+        },
+      },
+      required: ['data'],
+    };
+    const shape = (controller as any).jsonSchemaToZodShape(schema);
+    expect(shape.data).toBeDefined();
+
+    const objDef = shape.data._def;
+    expect(objDef.type).toBe('object');
+    expect(objDef.shape.name).toBeDefined();
+    expect(objDef.shape.value).toBeDefined();
+    // Both should be required (from allOf merging)
+    expect(objDef.shape.name._def.type).not.toBe('optional');
+    expect(objDef.shape.value._def.type).not.toBe('optional');
+  });
+
+  it('preserves enum on nested string properties', () => {
+    const controller = makeController();
+    const schema = {
+      type: 'object',
+      required: ['changes'],
+      properties: {
+        changes: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['status'],
+            properties: {
+              status: {
+                type: 'string',
+                enum: ['ACTIVE', 'INACTIVE'],
+              },
+            },
+          },
+        },
+      },
+    };
+    const shape = (controller as any).jsonSchemaToZodShape(schema);
+    // Zod 4: arr._def.element._def.shape.status._def.type === 'enum'
+    const inner = shape.changes._def.element._def.shape.status._def;
+    expect(inner.type).toBe('enum');
+    expect(inner.entries).toEqual({ ACTIVE: 'ACTIVE', INACTIVE: 'INACTIVE' });
+  });
+});

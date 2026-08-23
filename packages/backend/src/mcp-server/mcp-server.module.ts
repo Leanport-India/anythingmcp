@@ -13,6 +13,7 @@ import { DatabaseEngine } from '../connectors/engines/database.engine';
 import { OAuth2TokenService } from '../connectors/engines/oauth2-token.service';
 import { LoginTokenService } from '../connectors/engines/login-token.service';
 import { GraphqlSchemaService } from '../connectors/engines/graphql-schema.service';
+import { ConnectorAuthorizationsService } from '../connectors/connector-authorizations.service';
 import { McpServersModule } from '../mcp-servers/mcp-servers.module';
 import { LicenseModule } from '../license/license.module';
 
@@ -27,7 +28,7 @@ const ENGINES = [
 @Module({
   imports: [McpServersModule, LicenseModule],
   controllers: [McpEndpointController, WellKnownOAuthController],
-  providers: [McpServerService, ToolRegistry, DynamicMcpTools, McpCombinedAuthGuard, OAuth2TokenService, LoginTokenService, GraphqlSchemaService, ...ENGINES],
+  providers: [McpServerService, ToolRegistry, DynamicMcpTools, McpCombinedAuthGuard, OAuth2TokenService, LoginTokenService, GraphqlSchemaService, ConnectorAuthorizationsService, ...ENGINES],
   exports: [McpServerService, ToolRegistry],
 })
 export class McpServerModule {}

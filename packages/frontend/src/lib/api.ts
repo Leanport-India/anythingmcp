@@ -199,6 +199,18 @@ export const connectors = {
       hasAccessToken: boolean;
       hasRefreshToken: boolean;
     }>(`/api/connectors/${id}/oauth-config`, { token }),
+  /** Non-secret LOGIN_TOKEN settings, for pre-filling the edit form. */
+  getLoginTokenConfig: (id: string, token: string) =>
+    request<{
+      loginUrl: string;
+      loginMethod: string;
+      loginBody: unknown;
+      username: string;
+      tokenJsonPath: string;
+      tokenTTLSeconds: number | null;
+      refreshOn401: boolean;
+      hasPassword: boolean;
+    }>(`/api/connectors/${id}/login-token-config`, { token }),
   /**
    * Partial update of the OAuth2 settings. Merges server-side, so editing one
    * field keeps the stored tokens and the rest of the configuration intact.
@@ -258,6 +270,52 @@ export const connectors = {
       `/api/connectors/${id}/discover-tools`,
       { method: 'POST', token },
     ),
+  listAuthorizationAssignments: (id: string, token: string) =>
+    request<any[]>(`/api/connectors/${id}/authorization-assignments`, { token }),
+  createAuthorizationAssignment: (
+    id: string,
+    data: { userId?: string; roleId?: string },
+    token: string,
+  ) =>
+    request<any>(`/api/connectors/${id}/authorization-assignments`, {
+      method: 'POST',
+      body: data,
+      token,
+    }),
+  deleteAuthorizationAssignment: (id: string, assignmentId: string, token: string) =>
+    request(`/api/connectors/${id}/authorization-assignments/${assignmentId}`, {
+      method: 'DELETE',
+      token,
+    }),
+};
+
+// My Connections — end-user view of admin-assigned connectors ("My
+// Connections"). Never exposes connector internals (base URL, headers,
+// auth config) — only what a user needs to see and authorize their own.
+export const myConnections = {
+  list: (token: string) =>
+    request<
+      Array<{
+        connectorId: string;
+        name: string;
+        type: string;
+        authMode: 'SHARED' | 'PER_USER';
+        instructions: string | null;
+        status: 'PENDING' | 'AUTHORIZED' | 'REVOKED' | 'ERROR';
+        lastError: string | null;
+        authorizedAt: string | null;
+      }>
+    >('/api/me/connector-authorizations', { token }),
+  authorize: (connectorId: string, token: string) =>
+    request<{ authorizationUrl?: string }>(
+      `/api/me/connector-authorizations/${connectorId}/oauth/authorize`,
+      { method: 'POST', token },
+    ),
+  revoke: (connectorId: string, token: string) =>
+    request(`/api/me/connector-authorizations/${connectorId}`, {
+      method: 'DELETE',
+      token,
+    }),
 };
 
 // Adapters (built-in connector recipes)
@@ -285,6 +343,55 @@ export interface ToolAnnotations {
   destructiveHint?: boolean;
   idempotentHint?: boolean;
   openWorldHint?: boolean;
+}
+
+/**
+ * Optional per-tool shaping of the API response before it reaches the MCP
+ * client. Absent means the raw upstream response is returned unchanged.
+ */
+export interface ResponseTransform {
+  mode?: 'select' | 'jmespath' | 'off';
+  /** Keep only these paths, preserving the document shape. */
+  include?: string[];
+  /** Drop these paths. Applied before include/select. */
+  exclude?: string[];
+  /** Output template — leaves are paths (`$.a.b`), `= literal`, or `{ $from, $select }`. */
+  select?: Record<string, unknown>;
+  /** JMESPath expression, for computed values. */
+  expression?: string;
+  /** On error, return the raw response instead of failing. Default true. */
+  fallbackToRaw?: boolean;
+  /** Hard cap on the serialized output. 0 = off. */
+  maxBytes?: number;
+}
+
+/** Size accounting returned by the test and preview endpoints. */
+export interface MappingSummary {
+  mapped?: unknown;
+  mappingApplied?: boolean;
+  mappingError?: string;
+  mappingTruncated?: boolean;
+  rawBytes?: number;
+  mappedBytes?: number;
+  bytesSavedPct?: number;
+}
+
+export interface MappingPreview extends MappingSummary {
+  ok: boolean;
+  sampleSource: 'body' | 'last-invocation' | 'none';
+  sampleCapturedAt?: string | null;
+  raw?: unknown;
+  error?: string;
+}
+
+export interface ToolTestResult extends MappingSummary {
+  ok: boolean;
+  durationMs: number;
+  result?: unknown;
+  error?: string;
+  note?: string;
+  hint?: string;
+  kind?: string;
 }
 
 export const tools = {
@@ -322,13 +429,49 @@ export const tools = {
       `/api/connectors/${connectorId}/tools/${toolId}/annotations`,
       { method: 'PATCH', body: { annotations }, token },
     ),
+  getResponseMapping: (connectorId: string, toolId: string, token: string) =>
+    request<{
+      transform: ResponseTransform | null;
+      active: boolean;
+      sampleAvailable: boolean;
+      sampleCapturedAt: string | null;
+    }>(`/api/connectors/${connectorId}/tools/${toolId}/response-mapping`, { token }),
+  setResponseMapping: (
+    connectorId: string,
+    toolId: string,
+    transform: ResponseTransform | null,
+    token: string,
+  ) =>
+    request<{ transform: ResponseTransform | null; active: boolean }>(
+      `/api/connectors/${connectorId}/tools/${toolId}/response-mapping`,
+      { method: 'PATCH', body: { transform }, token },
+    ),
+  /** Dry-run a mapping against a sample (or the last real response). No API call. */
+  previewMapping: (
+    connectorId: string,
+    toolId: string,
+    body: { transform?: ResponseTransform | null; sample?: unknown },
+    token: string,
+  ) =>
+    request<MappingPreview>(
+      `/api/connectors/${connectorId}/tools/${toolId}/preview-mapping`,
+      { method: 'POST', body, token },
+    ),
   delete: (connectorId: string, toolId: string, token: string) =>
     request(`/api/connectors/${connectorId}/tools/${toolId}`, { method: 'DELETE', token }),
-  test: (connectorId: string, toolId: string, params: Record<string, unknown>, token: string) =>
-    request<{ ok: boolean; durationMs: number; result?: unknown; error?: string }>(
-      `/api/connectors/${connectorId}/tools/${toolId}/test`,
-      { method: 'POST', body: { params }, token },
-    ),
+  test: (
+    connectorId: string,
+    toolId: string,
+    params: Record<string, unknown>,
+    token: string,
+    transform?: ResponseTransform | null,
+  ) =>
+    request<ToolTestResult>(`/api/connectors/${connectorId}/tools/${toolId}/test`, {
+      method: 'POST',
+      // MCP-standard field name; `params` is still sent for older backends.
+      body: { arguments: params, params, ...(transform ? { transform } : {}) },
+      token,
+    }),
 };
 
 // Audit

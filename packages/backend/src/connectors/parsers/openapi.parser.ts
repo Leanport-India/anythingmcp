@@ -472,13 +472,19 @@ export class OpenApiParser {
     if (Array.isArray(combos) && combos.length) {
       if (schema.allOf) {
         const props: Record<string, unknown> = {};
+        const req: string[] = [];
         for (const sub of combos) {
+          const resolved = sub.$ref ? (this.resolveRef(sub, api) ?? sub) : sub;
           const s = this.openApiSchemaToJsonSchema(sub, api, depth + 1);
           if (s?.properties) Object.assign(props, s.properties);
+          if (Array.isArray(resolved?.required)) {
+            req.push(...resolved.required);
+          }
         }
-        return Object.keys(props).length
-          ? { type: 'object', properties: props, additionalProperties: true }
-          : undefined;
+        if (!Object.keys(props).length) return undefined;
+        const obj: Record<string, unknown> = { type: 'object', properties: props, additionalProperties: true };
+        if (req.length > 0) obj.required = req;
+        return obj;
       }
       return this.openApiSchemaToJsonSchema(combos[0], api, depth + 1);
     }
@@ -487,7 +493,9 @@ export class OpenApiParser {
 
     if (type === 'array' || schema.items) {
       const items = this.openApiSchemaToJsonSchema(schema.items, api, depth + 1);
-      return items ? { type: 'array', items } : { type: 'array' };
+      const arr: Record<string, unknown> = items ? { type: 'array', items } : { type: 'array' };
+      this.copyMetadata(arr, schema);
+      return arr;
     }
 
     if (type === 'object' || schema.properties) {
@@ -500,10 +508,32 @@ export class OpenApiParser {
             type: (v as any)?.type || 'string',
           };
       }
-      return { type: 'object', properties, additionalProperties: true };
+      const obj: Record<string, unknown> = { type: 'object', properties, additionalProperties: true };
+      if (Array.isArray(schema.required) && schema.required.length > 0) {
+        obj.required = schema.required;
+      }
+      this.copyMetadata(obj, schema);
+      return obj;
     }
 
-    return type ? { type } : undefined;
+    const leaf = type ? { type } as Record<string, unknown> : undefined;
+    if (leaf) this.copyMetadata(leaf, schema);
+    return leaf;
+  }
+
+  /**
+   * Copy OpenAPI schema metadata (enum, description, format, default,
+   * example, nullable) onto a converted JSON Schema node.  Only copies
+   * fields that are actually present on the source.
+   */
+  private copyMetadata(target: Record<string, unknown>, source: any): void {
+    if (!source || typeof source !== 'object') return;
+    if (source.enum) target.enum = source.enum;
+    if (source.description) target.description = source.description;
+    if (source.format) target.format = source.format;
+    if (source.default !== undefined) target.default = source.default;
+    if (source.example !== undefined) target.example = source.example;
+    if (source.nullable) target.nullable = source.nullable;
   }
 
   /** Resolve a local `$ref` against the (possibly non-dereferenced) spec. */
@@ -592,15 +622,12 @@ export class OpenApiParser {
 
     const properties = schema.properties || {};
     for (const [name, propSchema] of Object.entries(properties)) {
-      const prop = propSchema as any;
-      const entry: Record<string, unknown> = { type: prop.type || 'string' };
-      if (prop.description) entry.description = prop.description;
-      if (prop.enum) entry.enum = prop.enum;
-      if (prop.format) entry.format = prop.format;
-      if (prop.default !== undefined) entry.default = prop.default;
-      if (prop.nullable) entry.nullable = prop.nullable;
-      if (prop.example !== undefined) entry.example = prop.example;
-      result[name] = entry;
+      const converted = this.openApiSchemaToJsonSchema(propSchema, api, 0);
+      if (converted) {
+        result[name] = converted;
+      } else {
+        result[name] = { type: 'string' };
+      }
     }
 
     return result;

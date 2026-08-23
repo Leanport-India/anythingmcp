@@ -38,6 +38,7 @@ export class RestEngine {
       authConfig?: Record<string, unknown>;
       headers?: Record<string, string>;
       connectorId?: string;
+      credentialUserId?: string;
       // When set, route this request through the proxy / web-unblocker.
       // The caller (DynamicMcpTools) decides whether a proxy applies
       // (env present, tool opted in, license + rate-limit ok) and passes
@@ -213,6 +214,7 @@ export class RestEngine {
         const newToken = await this.oauth2TokenService.refreshToken(
           config.authConfig,
           config.connectorId,
+          config.credentialUserId,
         );
         if (newToken) {
           axiosConfig.headers = {
@@ -299,6 +301,7 @@ export class RestEngine {
       authType: string;
       authConfig?: Record<string, unknown>;
       connectorId?: string;
+      credentialUserId?: string;
     },
   ): Promise<void> {
     if (!config.authConfig) return;
@@ -339,6 +342,7 @@ export class RestEngine {
         const accessToken = await this.oauth2TokenService.getAccessToken(
           config.authConfig,
           config.connectorId,
+          config.credentialUserId,
         );
         axiosConfig.headers = {
           ...axiosConfig.headers,

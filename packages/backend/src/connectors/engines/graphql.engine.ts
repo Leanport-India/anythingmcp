@@ -30,6 +30,7 @@ export class GraphqlEngine {
       authConfig?: Record<string, unknown>;
       headers?: Record<string, string>;
       connectorId?: string;
+      credentialUserId?: string;
       proxyUrl?: string;
     },
     endpointMapping: {
@@ -101,6 +102,7 @@ export class GraphqlEngine {
           const accessToken = await this.oauth2TokenService.getAccessToken(
             config.authConfig,
             config.connectorId,
+            config.credentialUserId,
           );
           headers['Authorization'] = `Bearer ${accessToken}`;
           break;
@@ -203,6 +205,7 @@ export class GraphqlEngine {
         const newToken = await this.oauth2TokenService.refreshToken(
           config.authConfig,
           config.connectorId,
+          config.credentialUserId,
         );
         if (newToken) {
           headers['Authorization'] = `Bearer ${newToken}`;

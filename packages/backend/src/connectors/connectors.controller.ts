@@ -30,7 +30,7 @@ import {
   ArrayMinSize,
 } from 'class-validator';
 import { Type } from 'class-transformer';
-import { ConnectorType, AuthType } from '../generated/prisma/client';
+import { ConnectorType, AuthType, ConnectorAuthMode } from '../generated/prisma/client';
 import { ConnectorsService } from './connectors.service';
 import { buildGraphqlBuiltinTools, slugifyForPrefix } from './graphql-builtins';
 import { OpenApiParser } from './parsers/openapi.parser';
@@ -40,6 +40,7 @@ import { PostmanParser } from './parsers/postman.parser';
 import { CurlParser } from './parsers/curl.parser';
 import { McpClientEngine } from './engines/mcp-client.engine';
 import { McpOAuthService } from './mcp-oauth.service';
+import { ConnectorAuthorizationsService } from './connector-authorizations.service';
 import { CatalogResyncService } from './catalog-resync.service';
 import { PrismaService } from '../common/prisma.service';
 import { McpServerService } from '../mcp-server/mcp-server.service';
@@ -47,6 +48,7 @@ import { LicenseGuardService } from '../license/license-guard.service';
 import { getRequiredSecret } from '../common/secrets.util';
 import { decrypt } from '../common/crypto/encryption.util';
 import { getAdapter } from '../adapters/catalog';
+import { assertAdmin } from '../auth/capabilities';
 import {
   interpolateDeep,
   interpolateString,
@@ -182,6 +184,16 @@ class UpdateConnectorDto {
   @IsOptional()
   @IsObject()
   authConfig?: Record<string, unknown>;
+
+  @ApiPropertyOptional({
+    enum: ConnectorAuthMode,
+    description:
+      'SHARED (default): one admin-authorized credential used by everyone. ' +
+      'PER_USER: each assigned user must authorize with their own OAuth2 account.',
+  })
+  @IsOptional()
+  @IsEnum(ConnectorAuthMode)
+  authMode?: ConnectorAuthMode;
 
   @ApiPropertyOptional({
     description: 'Set to false to disable the connector without deleting it.',
@@ -436,6 +448,7 @@ export class ConnectorsController {
     private readonly curlParser: CurlParser,
     private readonly mcpClientEngine: McpClientEngine,
     private readonly mcpOAuthService: McpOAuthService,
+    private readonly connectorAuth: ConnectorAuthorizationsService,
     private readonly catalogResync: CatalogResyncService,
     private readonly prisma: PrismaService,
     private readonly mcpServer: McpServerService,
@@ -457,19 +470,12 @@ export class ConnectorsController {
   }
 
   private assertCanCreate(req: any) {
-    if (req.user.role === 'VIEWER') {
-      throw new ForbiddenException('Viewers cannot modify connectors');
-    }
+    assertAdmin(req.user, 'Only administrators can manage connectors');
   }
 
   private assertCanWrite(connector: any, req: any) {
     this.assertOrgMatch(connector, req);
-    if (req.user.role === 'VIEWER') {
-      throw new ForbiddenException('Viewers cannot modify connectors');
-    }
-    if (connector.userId !== req.user.sub && req.user.role !== 'ADMIN') {
-      throw new ForbiddenException('Only the connector owner or an admin can modify this connector');
-    }
+    assertAdmin(req.user, 'Only administrators can manage connectors');
   }
 
   @Get()
@@ -477,6 +483,7 @@ export class ConnectorsController {
   @ApiQuery({ name: 'limit', required: false, type: Number, description: '1..200' })
   @ApiQuery({ name: 'offset', required: false, type: Number })
   async list(@Req() req: any, @Query() pagination: PaginationQueryDto) {
+    assertAdmin(req.user, 'Only administrators can view connector configuration');
     return this.connectorsService.findByOrg(req.user.organizationId, {
       limit: pagination.limit,
       offset: pagination.offset,
@@ -556,7 +563,8 @@ export class ConnectorsController {
       'Returns { available: true } only when CONNECTOR_PROXY_URL is set. ' +
       'The UI uses this to show or hide the per-tool "Use proxy" checkbox.',
   })
-  async proxyAvailability() {
+  async proxyAvailability(@Req() req: any) {
+    assertAdmin(req.user, 'Only administrators can view connector configuration');
     return { available: !!process.env.CONNECTOR_PROXY_URL };
   }
 
@@ -567,6 +575,7 @@ export class ConnectorsController {
       'Runs a health check against all active connectors and returns their status.',
   })
   async healthCheck(@Req() req: any) {
+    assertAdmin(req.user, 'Only administrators can run connector health checks');
     const allConnectors = await this.connectorsService.findByOrg(req.user.organizationId);
     const active = allConnectors.filter((c) => c.isActive);
 
@@ -618,6 +627,7 @@ export class ConnectorsController {
       'and configuration. Auth credentials are excluded for security.',
   })
   async exportAll(@Req() req: any) {
+    assertAdmin(req.user, 'Only administrators can export connector configuration');
     const allConnectors = await this.prisma.connector.findMany({
       where: { organizationId: req.user.organizationId },
       include: { tools: true },
@@ -668,7 +678,14 @@ export class ConnectorsController {
   ) {
     const connector = await this.connectorsService.findById(id);
     this.assertCanWrite(connector, req);
-    return this.connectorsService.update(id, dto);
+    const updated = await this.connectorsService.update(id, dto);
+    // Reload the MCP tool registry so callers (e.g. Claude) pick up the edited
+    // authConfig/baseUrl/headers instead of the stale cached copy captured when
+    // the connector's tools were last loaded. Without this, an auth/credential
+    // edit that fixes the connector for AnythingMCP (which reads the DB fresh)
+    // is still invisible to MCP clients hitting the cached registry.
+    await this.mcpServer.reloadConnectorTools(id);
+    return updated;
   }
 
   @Get(':id/oauth-config')
@@ -702,6 +719,60 @@ export class ConnectorsController {
       hasClientSecret: !!cfg.clientSecret,
       hasAccessToken: !!cfg.accessToken,
       hasRefreshToken: !!cfg.refreshToken,
+    };
+  }
+
+  @Get(':id/login-token-config')
+  @ApiOperation({
+    summary: 'Read the non-secret LOGIN_TOKEN settings of a connector',
+    description:
+      'Returns the login URL, method, request body, username, token JSON path ' +
+      'and TTL so the UI can pre-fill the edit form. The password is never ' +
+      'returned — only a boolean saying whether one is set.',
+  })
+  async getLoginTokenConfig(@Req() req: any, @Param('id') id: string) {
+    const connector = await this.connectorsService.findById(id);
+    this.assertOrgMatch(connector, req);
+
+    if (connector.authType !== 'LOGIN_TOKEN') {
+      return {
+        loginUrl: '',
+        loginMethod: 'POST',
+        loginBody: null,
+        username: '',
+        tokenJsonPath: 'token',
+        tokenTTLSeconds: null,
+        refreshOn401: true,
+        hasPassword: false,
+      };
+    }
+
+    let cfg: Record<string, unknown> = {};
+    if (connector.authConfig) {
+      try {
+        cfg = JSON.parse(decrypt(connector.authConfig, this.encryptionKey));
+      } catch {
+        // Unreadable config (e.g. rotated key) — report it as empty rather
+        // than failing the page load.
+      }
+    }
+    const str = (v: unknown) => (typeof v === 'string' ? v : '');
+    const body =
+      cfg.loginBody !== undefined
+        ? cfg.loginBody
+        : cfg.loginBodyTemplate !== undefined
+          ? str(cfg.loginBodyTemplate)
+          : null;
+    return {
+      loginUrl: str(cfg.loginUrl),
+      loginMethod: str(cfg.loginMethod) || 'POST',
+      loginBody: body,
+      username: str(cfg.username),
+      tokenJsonPath: str(cfg.tokenJsonPath) || 'token',
+      tokenTTLSeconds:
+        typeof cfg.tokenTTLSeconds === 'number' ? cfg.tokenTTLSeconds : null,
+      refreshOn401: cfg.refreshOn401 !== false,
+      hasPassword: !!cfg.password,
     };
   }
 
@@ -800,6 +871,7 @@ export class ConnectorsController {
       let authorizationEndpoint: string;
       let tokenEndpoint: string;
       let scope: string | undefined;
+      let tokenAuthMethod: string | undefined;
 
       if (connector.type === 'MCP') {
         // MCP: discover OAuth metadata from remote server
@@ -828,6 +900,9 @@ export class ConnectorsController {
         authorizationEndpoint = String(authConfig.authorizationUrl || '');
         tokenEndpoint = String(authConfig.tokenUrl || '');
         scope = authConfig.scopes ? String(authConfig.scopes) : undefined;
+        tokenAuthMethod = authConfig.tokenAuthMethod
+          ? String(authConfig.tokenAuthMethod)
+          : undefined;
       }
 
       if (!clientId) {
@@ -850,10 +925,8 @@ export class ConnectorsController {
         redirectUri: callbackUrl,
         clientId,
         clientSecret,
+        tokenAuthMethod,
         tokenUrl: tokenEndpoint,
-        tokenAuthMethod: authConfig.tokenAuthMethod
-          ? String(authConfig.tokenAuthMethod)
-          : undefined,
         createdAt: Date.now(),
       });
 
@@ -1223,13 +1296,38 @@ export class ConnectorsController {
         ...((connector.envVars as Record<string, string> | null) || {}),
         ...envVars,
       };
+      const existingAuthConfig = connector.authConfig
+        ? JSON.parse(decrypt(connector.authConfig, this.encryptionKey))
+        : {};
       if (adapter.connector.authConfig) {
-        updateData.authConfig = interpolateDeep(
+        const resolvedAuthConfig = interpolateDeep(
           adapter.connector.authConfig as Record<string, unknown>,
           merged,
-        );
+        ) as Record<string, unknown>;
+        updateData.authConfig = {
+          ...resolvedAuthConfig,
+          // Preserve runtime OAuth state. Re-rendering a catalog authConfig from
+          // env vars must not wipe a valid consent grant or force sandbox
+          // connectors back to production endpoints.
+          accessToken: existingAuthConfig.accessToken,
+          refreshToken: existingAuthConfig.refreshToken,
+          expiresAt: existingAuthConfig.expiresAt,
+          expiresIn: existingAuthConfig.expiresIn,
+          authorizedAt: existingAuthConfig.authorizedAt,
+          lastRefreshedAt: existingAuthConfig.lastRefreshedAt,
+          authorizationUrl:
+            existingAuthConfig.authorizationUrl ||
+            resolvedAuthConfig.authorizationUrl,
+          tokenUrl: existingAuthConfig.tokenUrl || resolvedAuthConfig.tokenUrl,
+          tokenAuthMethod:
+            existingAuthConfig.tokenAuthMethod ||
+            resolvedAuthConfig.tokenAuthMethod,
+          scopes: existingAuthConfig.scopes || resolvedAuthConfig.scopes,
+        };
       }
-      updateData.baseUrl = interpolateString(adapter.connector.baseUrl, merged);
+      if (adapter.connector.baseUrl.includes('{{')) {
+        updateData.baseUrl = interpolateString(adapter.connector.baseUrl, merged);
+      }
       const adapterHeaders = (
         adapter.connector as { headers?: Record<string, string> }
       ).headers;
@@ -1418,5 +1516,47 @@ export class ConnectorsController {
       // shape; always empty under the new upsert strategy.
       skipped: [] as string[],
     };
+  }
+
+  // ── Non-admin authorization assignments (admin allowlist management) ─────
+
+  @Get(':id/authorization-assignments')
+  @ApiOperation({
+    summary: 'List which users/roles may see and authorize this connector',
+  })
+  async listAuthorizationAssignments(@Req() req: any, @Param('id') id: string) {
+    const connector = await this.connectorsService.findById(id);
+    this.assertCanWrite(connector, req);
+    return this.connectorAuth.listAssignmentsForConnector(id, req.user.organizationId);
+  }
+
+  @Post(':id/authorization-assignments')
+  @ApiOperation({
+    summary: 'Assign this connector to a user or MCP role',
+    description:
+      'Grants visibility and (for PER_USER connectors) the ability to self-authorize. ' +
+      'Provide exactly one of userId or roleId.',
+  })
+  async createAuthorizationAssignment(
+    @Req() req: any,
+    @Param('id') id: string,
+    @Body() dto: { userId?: string; roleId?: string },
+  ) {
+    const connector = await this.connectorsService.findById(id);
+    this.assertCanWrite(connector, req);
+    return this.connectorAuth.assign(id, req.user.organizationId, req.user.sub, dto);
+  }
+
+  @Delete(':id/authorization-assignments/:assignmentId')
+  @ApiOperation({ summary: 'Remove a user/role assignment for this connector' })
+  async deleteAuthorizationAssignment(
+    @Req() req: any,
+    @Param('id') id: string,
+    @Param('assignmentId') assignmentId: string,
+  ) {
+    const connector = await this.connectorsService.findById(id);
+    this.assertCanWrite(connector, req);
+    await this.connectorAuth.unassign(assignmentId, req.user.organizationId);
+    return { success: true };
   }
 }

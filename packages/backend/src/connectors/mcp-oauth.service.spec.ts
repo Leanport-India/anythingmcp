@@ -1,65 +1,70 @@
-import { McpOAuthService } from './mcp-oauth.service';
 import axios from 'axios';
+import { McpOAuthService } from './mcp-oauth.service';
 
 jest.mock('axios');
-// assertSafeOutboundUrl performs DNS/SSRF checks — stub it out for unit tests.
-jest.mock('../common/ssrf.util', () => ({
-  assertSafeOutboundUrl: jest.fn().mockResolvedValue(undefined),
-}));
-
 const mockedAxios = axios as jest.Mocked<typeof axios>;
 
-describe('McpOAuthService.exchangeCodeForTokens client authentication', () => {
+describe('McpOAuthService', () => {
   let service: McpOAuthService;
 
   beforeEach(() => {
     service = new McpOAuthService();
-    mockedAxios.post.mockReset();
-    mockedAxios.post.mockResolvedValue({
-      data: { access_token: 'at', refresh_token: 'rt', expires_in: 3600 },
-    } as any);
+    jest.clearAllMocks();
   });
 
-  const baseParams = {
-    tokenUrl: 'https://sandbox-api.datev.de/token',
-    code: 'authcode',
-    redirectUri: 'https://cloud.anythingmcp.com/api/mcp-oauth/callback',
-    clientId: 'cid',
-    clientSecret: 'secret',
-    codeVerifier: 'verifier',
-  };
+  describe('exchangeCodeForTokens', () => {
+    it('uses body credentials by default', async () => {
+      mockedAxios.post.mockResolvedValue({
+        data: {
+          access_token: 'access-token',
+          refresh_token: 'refresh-token',
+          expires_in: 3600,
+        },
+      });
 
-  it('defaults to client_secret_post (credentials in body, no Basic header)', async () => {
-    await service.exchangeCodeForTokens({ ...baseParams });
+      await service.exchangeCodeForTokens({
+        tokenUrl: 'https://auth.example.com/token',
+        code: 'code-123',
+        redirectUri: 'https://app.example.com/api/mcp-oauth/callback',
+        clientId: 'client-id',
+        clientSecret: 'client-secret',
+        codeVerifier: 'verifier',
+      });
 
-    const [, body, config] = mockedAxios.post.mock.calls[0];
-    expect(String(body)).toContain('client_secret=secret');
-    expect((config as any).headers.Authorization).toBeUndefined();
-  });
-
-  it('uses client_secret_basic when tokenAuthMethod=basic (header, not body)', async () => {
-    await service.exchangeCodeForTokens({
-      ...baseParams,
-      tokenAuthMethod: 'basic',
+      const [_url, body, opts] = mockedAxios.post.mock.calls[0] as any;
+      expect(body).toContain('client_id=client-id');
+      expect(body).toContain('client_secret=client-secret');
+      expect(opts.headers.Authorization).toBeUndefined();
     });
 
-    const [, body, config] = mockedAxios.post.mock.calls[0];
-    // Secret must NOT be in the body...
-    expect(String(body)).not.toContain('client_secret=');
-    // ...but in the Authorization header as base64(client_id:client_secret).
-    const expected =
-      'Basic ' + Buffer.from('cid:secret').toString('base64');
-    expect((config as any).headers.Authorization).toBe(expected);
-    // client_id still present in the body per RFC 6749.
-    expect(String(body)).toContain('client_id=cid');
-  });
+    it('uses HTTP Basic auth when tokenAuthMethod is client_secret_basic', async () => {
+      mockedAxios.post.mockResolvedValue({
+        data: {
+          access_token: 'access-token',
+          refresh_token: 'refresh-token',
+          expires_in: 3600,
+        },
+      });
 
-  it("treats 'client_secret_basic' as an alias for basic", async () => {
-    await service.exchangeCodeForTokens({
-      ...baseParams,
-      tokenAuthMethod: 'client_secret_basic',
+      await service.exchangeCodeForTokens({
+        tokenUrl: 'https://sandbox-api.datev.de/token',
+        code: 'code-123',
+        redirectUri: 'https://app.example.com/api/mcp-oauth/callback',
+        clientId: 'datev-client',
+        clientSecret: 'secret:with space',
+        tokenAuthMethod: 'client_secret_basic',
+        codeVerifier: 'verifier',
+      });
+
+      const [_url, body, opts] = mockedAxios.post.mock.calls[0] as any;
+      expect(body).toContain('grant_type=authorization_code');
+      expect(body).toContain('code=code-123');
+      expect(body).toContain('code_verifier=verifier');
+      expect(body).not.toContain('client_id=');
+      expect(body).not.toContain('client_secret=');
+      expect(opts.headers.Authorization).toBe(
+        `Basic ${Buffer.from('datev-client:secret%3Awith%20space').toString('base64')}`,
+      );
     });
-    const [, , config] = mockedAxios.post.mock.calls[0];
-    expect((config as any).headers.Authorization).toMatch(/^Basic /);
   });
 });

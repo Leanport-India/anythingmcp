@@ -32,7 +32,7 @@ const SIDEBAR_SECTIONS: SidebarSection[] = [
     title: 'Organization',
     icon: BuildingIcon,
     items: [
-      { href: '/settings/organization', label: 'General', description: 'Workspace and new orgs', icon: BuildingIcon },
+      { href: '/settings/organization', label: 'General', description: 'Workspace and new orgs', icon: BuildingIcon, adminOnly: true },
       { href: '/settings/users', label: 'Users', description: 'Members and invitations', icon: UsersIcon, adminOnly: true },
       { href: '/settings/roles', label: 'Roles', description: 'MCP tool access control', icon: ShieldIcon, adminOnly: true },
       { href: '/settings/license', label: 'License', description: 'Plan, features', icon: KeyIcon, adminOnly: true },

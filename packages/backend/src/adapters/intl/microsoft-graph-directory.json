@@ -1,0 +1,111 @@
+{
+  "slug": "microsoft-graph-directory",
+  "name": "Microsoft Graph Directory",
+  "description": "Read Microsoft Entra ID / Azure Active Directory users through Microsoft Graph. 2 tools, built-in OAuth2 auth.",
+  "instructions": "This connector uses Microsoft Graph API v1.0 directory endpoints with the built-in AnythingMCP OAuth2 authorization-code flow.\n\n**Setup**:\n1. Register an app in Microsoft Entra ID at https://portal.azure.com → **App registrations → New registration**.\n2. Add a Web redirect URI: `<your SERVER_URL>/api/mcp-oauth/callback` (for local Docker, usually `http://localhost:4000/api/mcp-oauth/callback`).\n3. Create a client secret under **Certificates & secrets**.\n4. Add Microsoft Graph delegated permissions: `User.Read`, `User.ReadBasic.All`, `User.Read.All`, `Directory.Read.All`, and `offline_access`. `Directory.Read.All` commonly requires tenant admin consent, but it lets agents fetch richer directory profile fields beyond the basic public profile.\n5. Set:\n   - `MICROSOFT_GRAPH_TENANT_ID` = your tenant ID, or `organizations`/`common` for broader sign-in\n   - `MICROSOFT_GRAPH_CLIENT_ID` = app/client ID\n   - `MICROSOFT_GRAPH_CLIENT_SECRET` = client secret value\n6. Import this adapter, then run the one-time OAuth flow: `POST /api/connectors/{id}/oauth/authorize` → open the returned URL → sign in and consent. AnythingMCP stores the encrypted access/refresh tokens and refreshes them automatically.\n\n**Authentication**: OAuth2. Requests send `Authorization: Bearer <token>` automatically after the OAuth callback succeeds.\n\n**Directory scope**: these tools read users from the signed-in user's tenant. Use `microsoft_graph_directory_list_users` to find directory users, then pass either the Graph user `id` or `userPrincipalName` into `microsoft_graph_directory_get_user_details`.\n\n**Fields**: Microsoft Graph returns its default user projection when `$select` is omitted. Pass `$select` to request fields such as `id`, `displayName`, `mail`, `userPrincipalName`, `jobTitle`, `department`, `accountEnabled`, `businessPhones`, `mobilePhone`, `officeLocation`, `createdDateTime`, or `signInActivity` when your permissions allow them.\n\n**Filtering and search**: Microsoft Graph supports OData `$filter`, `$orderby`, `$search`, and `$count` on `/users`. Advanced queries use the `ConsistencyLevel: eventual` header, which this adapter sends on list requests. `$search` expressions usually look like `\"displayName:Alex\"` or `\"mail:alex\"`.\n\n**Pagination**: list calls return OData `@odata.nextLink` when more users exist. Use `$top` to keep responses small; agents should usually request 10-50 users per page.\n\n**Rate limits**: Microsoft Graph throttles per app, tenant, and user. On 429 honor `Retry-After`.\n\n**Out of scope here**: creating/updating/deleting users, groups, app registrations, directory roles, audit logs, delta sync, app-only client-credentials tenant access, and beta-only Entra properties.",
+  "region": "intl",
+  "category": "identity",
+  "icon": "microsoft-graph",
+  "docsUrl": "https://learn.microsoft.com/en-us/graph/api/resources/users",
+  "requiredEnvVars": [
+    "MICROSOFT_GRAPH_TENANT_ID",
+    "MICROSOFT_GRAPH_CLIENT_ID",
+    "MICROSOFT_GRAPH_CLIENT_SECRET"
+  ],
+  "connector": {
+    "name": "Microsoft Graph (Directory)",
+    "type": "REST",
+    "baseUrl": "https://graph.microsoft.com/v1.0",
+    "authType": "OAUTH2",
+    "authConfig": {
+      "clientId": "{{MICROSOFT_GRAPH_CLIENT_ID}}",
+      "clientSecret": "{{MICROSOFT_GRAPH_CLIENT_SECRET}}",
+      "authorizationUrl": "https://login.microsoftonline.com/{{MICROSOFT_GRAPH_TENANT_ID}}/oauth2/v2.0/authorize",
+      "tokenUrl": "https://login.microsoftonline.com/{{MICROSOFT_GRAPH_TENANT_ID}}/oauth2/v2.0/token",
+      "tokenAuthMethod": "body",
+      "scopes": "offline_access User.Read User.ReadBasic.All User.Read.All Directory.Read.All"
+    }
+  },
+  "tools": [
+    {
+      "name": "microsoft_graph_directory_list_users",
+      "description": "List Microsoft Entra ID / Azure Active Directory users in the tenant. Supports OData $select, $filter, $orderby, $search, $count, $top, and $skipToken for directory discovery workflows.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "$top": {
+            "type": "integer",
+            "description": "Maximum users to return in one page. Use 10-50 for agent workflows; Graph supports larger pages depending on tenant and query."
+          },
+          "$select": {
+            "type": "string",
+            "description": "Comma-separated user fields, e.g. id,displayName,givenName,surname,mail,userPrincipalName,jobTitle,department,accountEnabled,officeLocation,mobilePhone."
+          },
+          "$filter": {
+            "type": "string",
+            "description": "OData filter, e.g. accountEnabled eq true or startswith(displayName,'Alex')."
+          },
+          "$orderby": {
+            "type": "string",
+            "description": "OData order expression, e.g. displayName asc or userPrincipalName asc."
+          },
+          "$search": {
+            "type": "string",
+            "description": "Graph search expression, usually quoted, e.g. \"displayName:Alex\" or \"mail:alex\". Advanced queries use ConsistencyLevel eventual."
+          },
+          "$count": {
+            "type": "boolean",
+            "description": "When true, include @odata.count. Advanced queries use ConsistencyLevel eventual."
+          },
+          "$skipToken": {
+            "type": "string",
+            "description": "Pagination token extracted from a previous @odata.nextLink when continuing a large user list."
+          }
+        }
+      },
+      "endpointMapping": {
+        "method": "GET",
+        "path": "/users",
+        "headers": {
+          "ConsistencyLevel": "eventual"
+        },
+        "queryParams": {
+          "$top": "$$top",
+          "$select": "${$select}",
+          "$filter": "$$filter",
+          "$orderby": "$$orderby",
+          "$search": "$$search",
+          "$count": "$$count",
+          "$skiptoken": "$$skipToken"
+        }
+      }
+    },
+    {
+      "name": "microsoft_graph_directory_get_user_details",
+      "description": "Get detailed Microsoft Entra ID / Azure Active Directory user profile data by Graph user ID or userPrincipalName, with optional $select to control returned fields.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "userId": {
+            "type": "string",
+            "description": "Microsoft Graph user ID or userPrincipalName, e.g. 00000000-0000-0000-0000-000000000000 or alex@contoso.com."
+          },
+          "$select": {
+            "type": "string",
+            "description": "Comma-separated user fields, e.g. id,displayName,mail,userPrincipalName,jobTitle,department,accountEnabled,businessPhones,mobilePhone,officeLocation,createdDateTime."
+          }
+        },
+        "required": [
+          "userId"
+        ]
+      },
+      "endpointMapping": {
+        "method": "GET",
+        "path": "/users/{userId}",
+        "queryParams": {
+          "$select": "${$select}"
+        }
+      }
+    }
+  ]
+}

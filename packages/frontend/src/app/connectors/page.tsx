@@ -11,6 +11,8 @@ import { Card } from '@/components/ui/card';
 import { Badge, StatusPill, type Tone } from '@/components/ui/badge';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import { AccessDenied } from '@/components/access-denied';
+import { getCapabilities } from '@/lib/capabilities';
 
 type HealthStatus = { total: number; healthy: number; unhealthy: number; connectors: any[] } | null;
 
@@ -85,7 +87,8 @@ const SUPPORTED_TYPES = [
 ];
 
 export default function ConnectorsPage() {
-  const { token } = useAuth();
+  const { token, user, isLoading: authLoading } = useAuth();
+  const capabilities = getCapabilities(user);
   const [list, setList] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -100,9 +103,9 @@ export default function ConnectorsPage() {
   const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
-    if (!token) return;
+    if (!token || !capabilities.canManageConnectors) return;
     connectors.list(token).then(setList).catch(() => {}).finally(() => setLoading(false));
-  }, [token]);
+  }, [token, capabilities.canManageConnectors]);
 
   const handleDelete = useCallback(async () => {
     if (!token || !deleteConfirm) return;
@@ -234,6 +237,9 @@ export default function ConnectorsPage() {
       </Link>
     </div>
   );
+
+  if (authLoading) return null;
+  if (!capabilities.canManageConnectors) return <AccessDenied />;
 
   return (
     <AppShell title="Connectors" actions={headerActions}>

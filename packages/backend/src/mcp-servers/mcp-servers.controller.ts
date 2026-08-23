@@ -10,7 +10,6 @@ import {
   Req,
   UseGuards,
   NotFoundException,
-  ForbiddenException,
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation, ApiQuery, ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { PaginationQueryDto } from '../common/pagination.dto';
@@ -19,6 +18,7 @@ import { IsString, IsOptional, IsBoolean, IsArray } from 'class-validator';
 import { McpServersService } from './mcp-servers.service';
 import { LicenseGuardService } from '../license/license-guard.service';
 import { PrismaService } from '../common/prisma.service';
+import { assertAdmin } from '../auth/capabilities';
 
 class CreateMcpServerDto {
   @ApiProperty({ description: 'Human-readable name.', example: 'Sales Workspace' })
@@ -106,12 +106,7 @@ export class McpServersController {
 
   private assertCanWrite(server: any, req: any) {
     this.assertOrgMatch(server, req);
-    if (req.user.role === 'VIEWER') {
-      throw new ForbiddenException('Viewers cannot modify MCP servers');
-    }
-    if (server.userId !== req.user.sub && req.user.role !== 'ADMIN') {
-      throw new ForbiddenException();
-    }
+    assertAdmin(req.user, 'Only administrators can manage MCP servers');
   }
 
   @Get()
@@ -119,6 +114,7 @@ export class McpServersController {
   @ApiQuery({ name: 'limit', required: false, type: Number, description: '1..200' })
   @ApiQuery({ name: 'offset', required: false, type: Number })
   async list(@Req() req: any, @Query() pagination: PaginationQueryDto) {
+    assertAdmin(req.user, 'Only administrators can view MCP servers');
     return this.mcpServersService.findAllByOrg(req.user.organizationId, {
       limit: pagination.limit,
       offset: pagination.offset,
@@ -128,6 +124,7 @@ export class McpServersController {
   @Post()
   @ApiOperation({ summary: 'Create a new MCP server' })
   async create(@Req() req: any, @Body() dto: CreateMcpServerDto) {
+    assertAdmin(req.user, 'Only administrators can manage MCP servers');
     await this.licenseGuard.checkCanCreateMcpServer(req.user.sub, req.user.organizationId);
     return this.mcpServersService.create(req.user.sub, req.user.organizationId, dto);
   }
@@ -138,6 +135,7 @@ export class McpServersController {
     const server = await this.mcpServersService.findById(id);
     if (!server) throw new NotFoundException('MCP server not found');
     this.assertOrgMatch(server, req);
+    assertAdmin(req.user, 'Only administrators can view MCP servers');
     return server;
   }
 

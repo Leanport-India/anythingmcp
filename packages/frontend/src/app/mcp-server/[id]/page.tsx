@@ -9,11 +9,14 @@ import { Button, buttonVariants } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Badge, StatusPill, type Tone } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
+import { AccessDenied } from '@/components/access-denied';
+import { getCapabilities } from '@/lib/capabilities';
 
 export default function McpServerDetailPage() {
   const { id } = useParams<{ id: string }>();
-  const { token } = useAuth();
+  const { token, user, isLoading: authLoading } = useAuth();
   const router = useRouter();
+  const capabilities = getCapabilities(user);
 
   const [server, setServer] = useState<any>(null);
   const [allConnectors, setAllConnectors] = useState<any[]>([]);
@@ -38,7 +41,7 @@ export default function McpServerDetailPage() {
   const [connectClient, setConnectClient] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!token || !id) return;
+    if (!token || !id || !capabilities.canManageMcpServers) return;
     Promise.all([
       mcpServers.get(id, token),
       connectorsApi.list(token),
@@ -50,7 +53,10 @@ export default function McpServerDetailPage() {
       setAllConnectors(conns);
       setAssignedIds(new Set(srv.connectors?.map((c: any) => c.connector.id) || []));
     }).catch(() => {}).finally(() => setLoading(false));
-  }, [token, id]);
+  }, [token, id, capabilities.canManageMcpServers]);
+
+  if (authLoading) return null;
+  if (!capabilities.canManageMcpServers) return <AccessDenied />;
 
   const apiUrl = typeof window !== 'undefined'
     ? window.location.hostname === 'localhost'

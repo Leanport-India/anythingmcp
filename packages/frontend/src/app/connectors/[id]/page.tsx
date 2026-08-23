@@ -3,10 +3,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
-import { connectors, tools } from '@/lib/api';
+import { connectors, tools, type ToolTestResult } from '@/lib/api';
 import { findDemoByTool } from '@/lib/demo-connectors';
 import { ToolEditor } from '@/components/tool-editor';
 import { McpAssignModal } from '@/components/mcp-assign-modal';
+import { ConnectorAuthorizationAssignments } from '@/components/connector-authorization-assignments';
 import { AppSelect } from '@/components/ui/select';
 import { HeadersEditor, headerRowsToObject, objectToHeaderRows, type HeaderRow } from '@/components/headers-editor';
 import { AppShell } from '@/components/app-shell';
@@ -14,6 +15,8 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Badge, StatusPill } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
+import { AccessDenied } from '@/components/access-denied';
+import { getCapabilities } from '@/lib/capabilities';
 import { ToolAnnotationsEditor } from '@/components/tool-annotations-editor';
 
 const IMPORT_SOURCES = [
@@ -28,8 +31,14 @@ const IMPORT_SOURCES = [
 
 const EDIT_DEFAULT_LOGIN_BODY = '{\n  "username": "${username}",\n  "password": "${password}"\n}';
 
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 export default function ConnectorDetailPage() {
-  const { token } = useAuth();
+  const { token, user, isLoading: authLoading } = useAuth();
   const params = useParams();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -53,6 +62,7 @@ export default function ConnectorDetailPage() {
   const [editHealthcheckPath, setEditHealthcheckPath] = useState('');
   const [editActive, setEditActive] = useState(true);
   const [editAuthType, setEditAuthType] = useState('NONE');
+  const [editAuthMode, setEditAuthMode] = useState<'SHARED' | 'PER_USER'>('SHARED');
   const [editAuthKey, setEditAuthKey] = useState('');
   const [editAuthValue, setEditAuthValue] = useState('');
   // OAuth2 only: how client credentials reach the token endpoint.
@@ -93,7 +103,10 @@ export default function ConnectorDetailPage() {
   const [testingToolId, setTestingToolId] = useState<string | null>(null);
   const [testParams, setTestParams] = useState('{}');
   const [testRunning, setTestRunning] = useState(false);
-  const [toolTestResult, setToolTestResult] = useState<{ ok: boolean; durationMs: number; result?: unknown; error?: string; [key: string]: unknown } | null>(null);
+  const [toolTestResult, setToolTestResult] = useState<ToolTestResult | null>(null);
+  // Which side of a mapped response the playground shows. Defaults to what an
+  // AI client would actually receive.
+  const [testResponseView, setTestResponseView] = useState<'mapped' | 'raw'>('mapped');
 
   // Import modal
   const [showImport, setShowImport] = useState(false);
@@ -109,6 +122,7 @@ export default function ConnectorDetailPage() {
   const [showEnvVars, setShowEnvVars] = useState(false);
   const [envVarEntries, setEnvVarEntries] = useState<{ key: string; value: string }[]>([]);
   const [savingEnvVars, setSavingEnvVars] = useState(false);
+  const capabilities = getCapabilities(user);
 
   const fetchConnector = async () => {
     if (!token) return;
@@ -125,6 +139,7 @@ export default function ConnectorDetailPage() {
       setEditHealthcheckPath(c.healthcheckPath || '');
       setEditActive(c.isActive);
       setEditAuthType(c.authType || 'NONE');
+      setEditAuthMode(c.authMode || 'SHARED');
       setEditInstructions(c.instructions || '');
       // Don't pre-fill credentials — they are encrypted on the server
       setEditAuthKey('');
@@ -143,8 +158,29 @@ export default function ConnectorDetailPage() {
           })
           .catch(() => setEditTokenAuthMethod('client_secret_post'));
       }
-      // authConfig is encrypted server-side, so LOGIN_TOKEN fields start empty;
-      // headers are stored in the clear and can be pre-filled for editing.
+      // authConfig is encrypted server-side, so LOGIN_TOKEN fields are filled
+      // from a dedicated non-secret endpoint (password never leaves the server).
+      // Headers are stored in the clear and can be pre-filled for editing.
+      if (c.authType === 'LOGIN_TOKEN') {
+        connectors
+          .getLoginTokenConfig(id, token)
+          .then((r) => {
+            setEditLtLoginUrl(r.loginUrl || '');
+            setEditLtMethod(r.loginMethod || 'POST');
+            setEditLtUsername(r.username || '');
+            setEditLtTokenPath(r.tokenJsonPath || 'token');
+            setEditLtTtl(r.tokenTTLSeconds != null ? String(r.tokenTTLSeconds) : '');
+            setEditLtRefreshOn401(r.refreshOn401);
+            setEditLtLoginBody(
+              typeof r.loginBody === 'string'
+                ? r.loginBody
+                : r.loginBody
+                  ? JSON.stringify(r.loginBody, null, 2)
+                  : EDIT_DEFAULT_LOGIN_BODY,
+            );
+          })
+          .catch(() => {});
+      }
       setEditLtPassword('');
       setEditHeaderRows(objectToHeaderRows(c.headers as Record<string, string> | null));
       setEditDbReadOnly((c.config as any)?.readOnly !== false);
@@ -179,8 +215,8 @@ export default function ConnectorDetailPage() {
       window.history.replaceState({}, '', `/connectors/${id}`);
     }
 
-    fetchConnector();
-  }, [token, id]);
+    if (capabilities.canManageConnectors) fetchConnector();
+  }, [token, id, capabilities.canManageConnectors]);
 
   const buildAuthConfig = () => {
     // Only send authConfig if the user filled in credential fields;
@@ -233,6 +269,7 @@ export default function ConnectorDetailPage() {
         healthcheckPath: editHealthcheckPath.trim() || null,
         isActive: editActive,
         authType: editAuthType,
+        ...(editAuthType === 'OAUTH2' ? { authMode: editAuthMode } : {}),
         instructions: editInstructions.trim() || null,
       };
       const authConfig = buildAuthConfig();
@@ -394,6 +431,7 @@ export default function ConnectorDetailPage() {
     if (!token) return;
     setTestRunning(true);
     setToolTestResult(null);
+    setTestResponseView('mapped');
     try {
       const params =
         paramsOverride !== undefined ? paramsOverride : JSON.parse(testParams);
@@ -528,6 +566,9 @@ export default function ConnectorDetailPage() {
     }
   };
 
+
+  if (authLoading) return null;
+  if (!capabilities.canManageConnectors) return <AccessDenied />;
 
   if (loading) {
     return (
@@ -763,6 +804,25 @@ export default function ConnectorDetailPage() {
                   ]}
                 />
               </div>
+              {editAuthType === 'OAUTH2' && (
+                <div>
+                  <label className="block text-sm font-medium mb-1">Who authorizes this connector?</label>
+                  <AppSelect
+                    value={editAuthMode}
+                    onValueChange={(v) => setEditAuthMode(v as 'SHARED' | 'PER_USER')}
+                    className="w-full border border-[var(--border)] rounded-[9px] px-3 py-2 text-sm bg-[var(--surface)] focus:outline-none focus:border-[var(--border-strong)]"
+                    options={[
+                      { value: 'SHARED', label: 'Global — one admin credential for all users' },
+                      { value: 'PER_USER', label: 'Per User — each user authorizes their own account' },
+                    ]}
+                  />
+                  <p className="text-xs text-[var(--text-3)] mt-1.5">
+                    {editAuthMode === 'PER_USER'
+                      ? "Each assigned user connects their own account from My Connections. No one's data or tokens are shared with anyone else."
+                      : 'You authorize once below; the connector is shared with every user in the organization. Non-admin users can call its tools without seeing the connector in their UI.'}
+                  </p>
+                </div>
+              )}
               {editAuthType === 'API_KEY' && (
                 <div className="grid grid-cols-2 gap-4">
                   <div>
@@ -997,6 +1057,10 @@ export default function ConnectorDetailPage() {
           </Card>
         )}
 
+        {connector.authMode === 'PER_USER' && (
+          <ConnectorAuthorizationAssignments connectorId={id} />
+        )}
+
         {/* Environment Variables */}
         <Card className="p-[22px]">
           <div className="flex items-center justify-between mb-4">
@@ -1176,11 +1240,16 @@ export default function ConnectorDetailPage() {
                     <ToolEditor
                       connectorType={connector.type}
                       envVarKeys={new Set(envVarEntries.map((e) => e.key.trim()).filter(Boolean))}
+                      connectorId={id}
+                      toolId={tool.id}
                       existingTool={{
                         name: tool.name,
                         description: tool.description,
                         parameters: tool.parameters || { type: 'object', properties: {} },
                         endpointMapping: tool.endpointMapping || { method: 'GET', path: '/' },
+                        // Without this the editor starts from an empty mapping
+                        // and wipes cacheTtl / followUp / transform on save.
+                        responseMapping: tool.responseMapping || undefined,
                       }}
                       onSave={(data) => handleUpdateTool(tool.id, data)}
                       onCancel={() => setEditingToolId(null)}
@@ -1207,6 +1276,15 @@ export default function ConnectorDetailPage() {
                                 title={`Removed from the source spec on ${new Date(tool.deprecatedAt).toLocaleString()}. Role assignments and history are preserved.`}
                               >
                                 deprecated
+                              </Badge>
+                            )}
+                            {tool.responseMapping?.transform && (
+                              <Badge
+                                tone="info"
+                                className="flex-shrink-0"
+                                title="A response mapping shapes this tool's output before it reaches the AI client. Edit it under Response Mapping."
+                              >
+                                mapped
                               </Badge>
                             )}
                           </div>
@@ -1367,6 +1445,39 @@ export default function ConnectorDetailPage() {
                                   </span>
                                 )}
                               </label>
+                              {/* Raw vs mapped, so the effect of a response
+                                  mapping (and its token saving) is visible
+                                  right where the tool is exercised. */}
+                              {toolTestResult?.ok && toolTestResult.mappingApplied === true && (
+                                <div className="flex items-center gap-2 mb-1 flex-wrap">
+                                  {(['mapped', 'raw'] as const).map((view) => (
+                                    <button
+                                      key={view}
+                                      onClick={() => setTestResponseView(view)}
+                                      className={cn(
+                                        'rounded-[7px] border px-2 py-0.5 text-[11px] font-medium transition-colors',
+                                        testResponseView === view
+                                          ? 'border-[var(--brand)] bg-[var(--brand-tint)] text-[var(--brand)]'
+                                          : 'border-[var(--border)] bg-[var(--surface)] text-[var(--text-2)]',
+                                      )}
+                                    >
+                                      {view === 'mapped' ? 'Mapped (what the AI sees)' : 'Raw API response'}
+                                    </button>
+                                  ))}
+                                  <span className="text-[11px] text-[var(--text-3)]">
+                                    {formatBytes(Number(toolTestResult.rawBytes) || 0)} →{' '}
+                                    {formatBytes(Number(toolTestResult.mappedBytes) || 0)} (
+                                    {Number(toolTestResult.bytesSavedPct) > 0 ? '−' : ''}
+                                    {Math.abs(Number(toolTestResult.bytesSavedPct) || 0)}%)
+                                  </span>
+                                </div>
+                              )}
+                              {toolTestResult?.ok && typeof toolTestResult.mappingError === 'string' && (
+                                <div className="mb-2 rounded-[9px] border border-[var(--t-warn-bg)] bg-[var(--t-warn-bg)] px-3 py-2 text-xs text-[var(--t-warn-fg)]">
+                                  Response mapping failed ({String(toolTestResult.mappingError)}) — the
+                                  raw response is being returned. Fix it under Edit → Response Mapping.
+                                </div>
+                              )}
                               {toolTestResult && typeof toolTestResult.note === 'string' && (
                                 <div className="mt-2 rounded-[9px] border border-[var(--t-info-fg)]/20 bg-[var(--t-info-bg)] px-3 py-2 text-xs text-[var(--t-info-fg)]">
                                   {toolTestResult.note}
@@ -1396,7 +1507,14 @@ export default function ConnectorDetailPage() {
                               <pre className="w-full border border-[var(--border)] rounded-[9px] px-3 py-2 text-xs bg-[var(--surface-2)] font-mono overflow-auto max-h-40 min-h-[8rem]">
                                 {toolTestResult
                                   ? toolTestResult.ok
-                                    ? JSON.stringify(toolTestResult.result, null, 2)
+                                    ? JSON.stringify(
+                                        toolTestResult.mappingApplied === true &&
+                                          testResponseView === 'mapped'
+                                          ? toolTestResult.mapped
+                                          : toolTestResult.result,
+                                        null,
+                                        2,
+                                      )
                                     : JSON.stringify(toolTestResult, null, 2)
                                   : 'Click "Run Test" to execute this tool...'}
                               </pre>

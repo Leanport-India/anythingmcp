@@ -14,6 +14,8 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Badge, type Tone } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
+import { AccessDenied } from '@/components/access-denied';
+import { getCapabilities } from '@/lib/capabilities';
 
 const PAGE_SIZE = 25;
 
@@ -30,7 +32,8 @@ const textareaCls =
   'w-full px-3 py-2.5 rounded-[9px] text-[13px] bg-[var(--surface)] border border-[var(--border)] text-[var(--text)] placeholder:text-[var(--text-3)] outline-none focus:border-[var(--border-strong)] leading-relaxed';
 
 export default function SkillsPage() {
-  const { token, user } = useAuth();
+  const { token, user, isLoading: authLoading } = useAuth();
+  const capabilities = getCapabilities(user);
   const [items, setItems] = useState<KgSkill[]>([]);
   const [counts, setCounts] = useState({ pending: 0, applied: 0, dismissed: 0 });
   const [total, setTotal] = useState(0);
@@ -50,7 +53,7 @@ export default function SkillsPage() {
   const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const load = useCallback(() => {
-    if (!token) return;
+    if (!token || !capabilities.canManageKnowledgeGraph) return;
     setLoading(true);
     knowledgeGraph.skills
       .list(token, {
@@ -66,14 +69,14 @@ export default function SkillsPage() {
       })
       .catch((e) => setStatus(e.message || 'Failed to load'))
       .finally(() => setLoading(false));
-  }, [token, statusFilter, debouncedQuery, page]);
+  }, [token, capabilities.canManageKnowledgeGraph, statusFilter, debouncedQuery, page]);
 
   useEffect(() => load(), [load]);
   useEffect(() => {
-    if (!token) return;
+    if (!token || !capabilities.canManageKnowledgeGraph) return;
     mcpServersApi.list(token).then((s: any[]) => setServers(s.map((x) => ({ id: x.id, name: x.name })))).catch(() => {});
     connectorsApi.list(token).then((c: any[]) => setConnectorList(c.map((x) => ({ id: x.id, name: x.name })))).catch(() => {});
-  }, [token]);
+  }, [token, capabilities.canManageKnowledgeGraph]);
 
   // Debounce the search box → commit to debouncedQuery (which load depends on)
   const onSearch = (v: string) => {
@@ -128,6 +131,9 @@ export default function SkillsPage() {
   const from = total === 0 ? 0 : page * PAGE_SIZE + 1;
   const to = Math.min(total, (page + 1) * PAGE_SIZE);
   const everEmpty = counts.pending + counts.applied + counts.dismissed === 0;
+
+  if (authLoading) return null;
+  if (!capabilities.canManageKnowledgeGraph) return <AccessDenied />;
 
   return (
     <AppShell

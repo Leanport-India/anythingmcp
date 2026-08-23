@@ -41,6 +41,8 @@ model Organization {
   kgConnectorState KgConnectorState[]
   kgValueSeen      KgValueSeen[]
   kgSkills         KgSkillSuggestion[]
+  connectorAuthAssignments   ConnectorAuthorizationAssignment[]
+  userConnectorAuthorizations UserConnectorAuthorization[]
 
   @@map("organizations")
 }
@@ -124,6 +126,8 @@ model User {
   passwordResetTokens      PasswordResetToken[]
   mcpApiKeys               McpApiKey[]
   emailVerificationTokens  EmailVerificationToken[]
+  connectorAuthAssignments ConnectorAuthorizationAssignment[]
+  connectorAuthorizations  UserConnectorAuthorization[]
 
   @@index([organizationId])
   @@map("users")
@@ -223,6 +227,7 @@ model Role {
 
   users      User[]
   toolAccess ToolRoleAccess[]
+  connectorAuthAssignments ConnectorAuthorizationAssignment[]
 
   @@unique([organizationId, name])
   @@map("roles")
@@ -289,6 +294,11 @@ enum AuthType {
   LOGIN_TOKEN
 }
 
+enum ConnectorAuthMode {
+  SHARED
+  PER_USER
+}
+
 model Connector {
   id             String        @id @default(cuid())
   userId         String        @map("user_id")
@@ -300,6 +310,12 @@ model Connector {
   type     ConnectorType
   baseUrl  String        @map("base_url")
   isActive Boolean       @default(true) @map("is_active")
+
+  // SHARED (default): one admin-authorized credential used by everyone.
+  // PER_USER: each user must complete their own OAuth2 grant; credentials
+  // are stored per-(connector, user) in UserConnectorAuthorization instead
+  // of the shared authConfig/ConnectorAuthCache.
+  authMode ConnectorAuthMode @default(SHARED) @map("auth_mode")
 
   // Path appended to baseUrl when "Test connection" runs. Defaults to "/"
   // when null but can be set explicitly (auto-deduced from imported OpenAPI
@@ -327,18 +343,91 @@ model Connector {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  tools           McpTool[]
-  resources       McpResource[]
-  prompts         McpPrompt[]
-  mcpServers      McpServerConnector[]
-  authCache       ConnectorAuthCache?
-  toolInvocations ToolInvocation[]
-  kgNodes         KgNode[]
-  kgState         KgConnectorState?
-  kgSkills        KgSkillSuggestion[]
+  tools               McpTool[]
+  resources           McpResource[]
+  prompts             McpPrompt[]
+  mcpServers          McpServerConnector[]
+  authCache           ConnectorAuthCache?
+  toolInvocations     ToolInvocation[]
+  kgNodes             KgNode[]
+  kgState             KgConnectorState?
+  kgSkills            KgSkillSuggestion[]
+  authAssignments     ConnectorAuthorizationAssignment[]
+  userAuthorizations  UserConnectorAuthorization[]
 
   @@index([organizationId])
   @@map("connectors")
+}
+
+// ── Connector Authorization Assignment (admin allowlist) ───────────────────
+// Admin-controlled visibility: a viewer/non-admin user may only see and
+// authorize connectors that have an enabled assignment here, targeting
+// either their user id directly or one of their roles. This is orthogonal
+// to ToolRoleAccess (which tools can be invoked) and to admin management
+// capability (who can edit the connector definition).
+
+model ConnectorAuthorizationAssignment {
+  id             String       @id @default(cuid())
+  organizationId String       @map("organization_id")
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  connectorId    String       @map("connector_id")
+  connector      Connector    @relation(fields: [connectorId], references: [id], onDelete: Cascade)
+
+  // Exactly one of userId / roleId is set: assign directly to a user, or to
+  // everyone holding a given MCP Role.
+  userId String? @map("user_id")
+  user   User?   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  roleId String? @map("role_id")
+  role   Role?   @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  enabled   Boolean  @default(true)
+  createdBy String   @map("created_by")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([connectorId, userId])
+  @@unique([connectorId, roleId])
+  @@index([organizationId])
+  @@index([userId])
+  @@index([roleId])
+  @@map("connector_authorization_assignments")
+}
+
+// ── Per-User Connector Authorization (PER_USER credential storage) ─────────
+// Populated only for connectors with authMode = PER_USER. Each user
+// authorizes with their own OAuth2 account; the resulting token is scoped
+// to (connectorId, userId) and is never shared with other users.
+
+enum UserConnectorAuthorizationStatus {
+  PENDING
+  AUTHORIZED
+  REVOKED
+  ERROR
+}
+
+model UserConnectorAuthorization {
+  id             String       @id @default(cuid())
+  organizationId String       @map("organization_id")
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  connectorId    String       @map("connector_id")
+  connector      Connector    @relation(fields: [connectorId], references: [id], onDelete: Cascade)
+  userId         String       @map("user_id")
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  status       UserConnectorAuthorizationStatus @default(PENDING)
+  // Encrypted JSON: accessToken, refreshToken, tokenUrl, clientId,
+  // clientSecret, tokenAuthMethod, expiresAt, authorizedAt — same shape as
+  // Connector.authConfig but scoped to this one user.
+  credential   String?  @db.Text @map("credential")
+  lastError    String?  @db.Text @map("last_error")
+  authorizedAt DateTime? @map("authorized_at")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@unique([connectorId, userId])
+  @@index([organizationId])
+  @@index([userId])
+  @@map("user_connector_authorizations")
 }
 
 // ── Connector Auth Cache ────────────────────────────────────────────────────

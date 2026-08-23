@@ -744,4 +744,202 @@ describe('OpenApiParser', () => {
     expect(Object.keys((t.outputSchema as any).properties)).toContain('order_id');
   });
 
+  // ── Nested array-of-objects in request body ─────────────────────────────
+
+  it('should preserve array items schema with required fields and enum', async () => {
+    const spec = {
+      ...minimalSpec,
+      paths: {
+        '/import-proposals/direct': {
+          post: {
+            operationId: 'createDirectImportProposal',
+            summary: 'Create a direct import proposal',
+            requestBody: {
+              required: true,
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      changes: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          required: ['type', 'fieldPath'],
+                          properties: {
+                            type: {
+                              type: 'string',
+                              enum: ['COMPENSATION_CHANGE', 'ROLE_CHANGE', 'DEPARTMENT_TRANSFER'],
+                              description: 'The type of change',
+                            },
+                            fieldPath: {
+                              type: 'string',
+                              description: 'Dot-notation path to the field',
+                            },
+                            field: {
+                              type: 'string',
+                              description: 'Legacy field name',
+                            },
+                            newValue: { type: 'string' },
+                            description: { type: 'string' },
+                            currency: { type: 'string' },
+                          },
+                        },
+                        description: 'List of changes to propose',
+                      },
+                    },
+                    required: ['changes'],
+                  },
+                },
+              },
+            },
+            responses: { '201': { description: 'Created' } },
+          },
+        },
+      },
+    };
+    const tools = await parser.parse(spec);
+    expect(tools).toHaveLength(1);
+    const params = tools[0].parameters as any;
+
+    // The changes parameter should be an array with full item shape
+    expect(params.properties.changes).toBeDefined();
+    expect(params.properties.changes.type).toBe('array');
+    expect(params.properties.changes.items).toBeDefined();
+    expect(params.properties.changes.items.type).toBe('object');
+
+    // Required fields inside the items
+    expect(params.properties.changes.items.required).toEqual(['type', 'fieldPath']);
+
+    // Each item property should be preserved
+    const itemProps = params.properties.changes.items.properties;
+    expect(itemProps.type.enum).toEqual(['COMPENSATION_CHANGE', 'ROLE_CHANGE', 'DEPARTMENT_TRANSFER']);
+    expect(itemProps.type.description).toBe('The type of change');
+    expect(itemProps.fieldPath.description).toBe('Dot-notation path to the field');
+    expect(itemProps.field).toBeDefined();
+    expect(itemProps.newValue).toBeDefined();
+    expect(itemProps.description).toBeDefined();
+    expect(itemProps.currency).toBeDefined();
+
+    // Top-level required
+    expect(params.required).toContain('changes');
+  });
+
+  it('should resolve $ref in request body nested objects', async () => {
+    const spec: any = {
+      ...minimalSpec,
+      paths: {
+        '/proposals': {
+          post: {
+            operationId: 'createProposal',
+            summary: 'Create proposal',
+            requestBody: {
+              required: true,
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      changes: {
+                        type: 'array',
+                        items: { $ref: '#/components/schemas/ChangeItem' },
+                      },
+                    },
+                    required: ['changes'],
+                  },
+                },
+              },
+            },
+            responses: { '201': { description: 'Created' } },
+          },
+        },
+      },
+      components: {
+        schemas: {
+          ChangeItem: {
+            type: 'object',
+            required: ['type', 'fieldPath'],
+            properties: {
+              type: { type: 'string', enum: ['SALARY', 'BONUS'] },
+              fieldPath: { type: 'string' },
+              newValue: { type: 'string' },
+            },
+          },
+        },
+      },
+    };
+    const tools = await parser.parse(spec);
+    const params = tools[0].parameters as any;
+    const items = params.properties.changes.items;
+
+    expect(items.type).toBe('object');
+    expect(items.required).toEqual(['type', 'fieldPath']);
+    expect(items.properties.type.enum).toEqual(['SALARY', 'BONUS']);
+    expect(items.properties.fieldPath.type).toBe('string');
+    expect(items.properties.newValue.type).toBe('string');
+  });
+
+  it('should handle nested allOf with required fields in request body', async () => {
+    const spec = {
+      ...minimalSpec,
+      paths: {
+        '/items': {
+          post: {
+            operationId: 'createItem',
+            summary: 'Create item',
+            requestBody: {
+              required: true,
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      data: {
+                        allOf: [
+                          {
+                            type: 'object',
+                            required: ['name'],
+                            properties: {
+                              name: { type: 'string', description: 'Item name' },
+                            },
+                          },
+                          {
+                            type: 'object',
+                            required: ['value'],
+                            properties: {
+                              value: { type: 'number' },
+                              metadata: { type: 'object', properties: { key: { type: 'string' } } },
+                            },
+                          },
+                        ],
+                      },
+                    },
+                    required: ['data'],
+                  },
+                },
+              },
+            },
+            responses: { '201': { description: 'Created' } },
+          },
+        },
+      },
+    };
+    const tools = await parser.parse(spec);
+    const params = tools[0].parameters as any;
+    const data = params.properties.data;
+
+    expect(data.type).toBe('object');
+    // allOf required fields should be merged
+    expect(data.required).toEqual(expect.arrayContaining(['name', 'value']));
+    // Both branches' properties should be present
+    expect(data.properties.name).toBeDefined();
+    expect(data.properties.name.type).toBe('string');
+    expect(data.properties.name.description).toBe('Item name');
+    expect(data.properties.value).toBeDefined();
+    expect(data.properties.value.type).toBe('number');
+    // Nested object should be preserved
+    expect(data.properties.metadata.type).toBe('object');
+    expect(data.properties.metadata.properties.key.type).toBe('string');
+  });
+
 });

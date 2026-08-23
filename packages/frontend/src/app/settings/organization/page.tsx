@@ -7,9 +7,12 @@ import * as Dialog from '@radix-ui/react-dialog';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { StatusPill } from '@/components/ui/badge';
+import { AccessDenied } from '@/components/access-denied';
+import { getCapabilities } from '@/lib/capabilities';
 
 export default function OrganizationSettingsPage() {
-  const { token, user, orgName, orgs, setOrgName, switchOrg, replaceSession } = useAuth();
+  const { token, user, orgName, orgs, setOrgName, switchOrg, replaceSession, isLoading } = useAuth();
+  const capabilities = getCapabilities(user);
   const [name, setName] = useState('');
   const [orgId, setOrgId] = useState('');
   const [createdAt, setCreatedAt] = useState('');
@@ -34,14 +37,14 @@ export default function OrganizationSettingsPage() {
   const isAdmin = user?.role === 'ADMIN';
 
   useEffect(() => {
-    if (!token) return;
+    if (!token || !capabilities.canViewAdminSettings) return;
     organizations.getCurrent(token).then((org) => {
       setName(org.name);
       setOrgId(org.id);
       setCreatedAt(org.createdAt);
     }).catch(() => {});
     knowledgeGraph.getSettings(token).then(setKg).catch(() => {});
-  }, [token]);
+  }, [token, capabilities.canViewAdminSettings]);
 
   const updateFlag = async (patch: { enabled?: boolean; llmEnabled?: boolean; captureIntent?: boolean; autoExtend?: boolean; skillAutoApply?: boolean; edgeAutoApply?: boolean }) => {
     if (!token || !kg) return;
@@ -113,6 +116,9 @@ export default function OrganizationSettingsPage() {
   const inputReadonlyClass =
     'w-full h-9 rounded-[9px] border border-[var(--border)] bg-[var(--surface-2)] px-3 text-sm text-[var(--text-3)] cursor-not-allowed';
   const labelClass = 'block text-[12.5px] font-medium text-[var(--text-2)] mb-1';
+
+  if (isLoading) return null;
+  if (!capabilities.canViewAdminSettings) return <AccessDenied />;
 
   return (
     <div className="space-y-6 max-w-2xl">

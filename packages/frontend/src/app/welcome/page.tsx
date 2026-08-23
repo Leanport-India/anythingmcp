@@ -7,6 +7,8 @@ import { useAuth } from '@/lib/auth-context';
 import { adapters, users } from '@/lib/api';
 import { LogoIcon } from '@/components/logo-icon';
 import { DEMO_CONNECTORS, type DemoConnector } from '@/lib/demo-connectors';
+import { AccessDenied } from '@/components/access-denied';
+import { getCapabilities } from '@/lib/capabilities';
 
 // A small, curated subset of slugs known to actually work end-to-end
 // today, ordered by popularity from the production analytics
@@ -27,6 +29,7 @@ const STARTER_SLUGS = [
 
 export default function WelcomePage() {
   const { token, user, isLoading } = useAuth();
+  const capabilities = getCapabilities(user);
   const router = useRouter();
   const [starters, setStarters] = useState<any[]>([]);
   const [skipping, setSkipping] = useState(false);
@@ -62,7 +65,7 @@ export default function WelcomePage() {
     // Fetch the catalog so we can show real logos + descriptions for
     // the starter set. If the catalog endpoint fails we degrade
     // gracefully to the two empty CTA cards.
-    if (!token) return;
+    if (!token || !capabilities.canViewOnboarding) return;
     adapters
       .list(token)
       .then((all: any[]) => {
@@ -72,7 +75,7 @@ export default function WelcomePage() {
         );
       })
       .catch(() => setStarters([]));
-  }, [token]);
+  }, [token, capabilities.canViewOnboarding]);
 
   const handleSkip = async () => {
     if (!token || skipping) return;
@@ -93,6 +96,8 @@ export default function WelcomePage() {
       </div>
     );
   }
+
+  if (!capabilities.canViewOnboarding) return <AccessDenied />;
 
   return (
     <div className="min-h-screen bg-[var(--bg)] text-[var(--text)]">

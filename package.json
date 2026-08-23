@@ -1,6 +1,6 @@
 {
   "name": "anythingmcp",
-  "version": "0.4.0",
+  "version": "0.4.2",
   "description": "Self-hosted MCP gateway for REST, SOAP/WSDL, GraphQL and SQL — turn any API into MCP tools for Claude, ChatGPT, Gemini, Copilot and Cursor. 30+ pre-built adapters, on-prem audit log, OAuth2/RBAC. Open source (AGPL-3.0).",
   "private": true,
   "license": "AGPL-3.0-only",
@@ -28,7 +28,7 @@
   },
   "devDependencies": {
     "@types/cookie-parser": "^1.4.10",
-    "concurrently": "^9.1.2"
+    "concurrently": "^9.2.4"
   },
   "dependencies": {
     "class-transformer": "^0.5.1",

@@ -10,15 +10,29 @@ import { ConnectorAuthorizationsService } from '../connector-authorizations.serv
 /** Refresh tokens that expire within this window (5 minutes). */
 const PROACTIVE_REFRESH_BUFFER_MS = 5 * 60 * 1000;
 
-function usesBasicTokenAuth(method?: string): boolean {
+export function usesBasicTokenAuth(method?: string): boolean {
   return method === 'basic' || method === 'client_secret_basic';
 }
 
-function buildBasicTokenAuthHeader(clientId: string, clientSecret: string): string {
+export function buildBasicTokenAuthHeader(clientId: string, clientSecret: string): string {
   // OAuth2 client_secret_basic uses form-encoding before base64 (RFC 6749 §2.3.1).
   const user = encodeURIComponent(clientId);
   const pass = encodeURIComponent(clientSecret);
   return `Basic ${Buffer.from(`${user}:${pass}`).toString('base64')}`;
+}
+
+/**
+ * Rolling refresh-token expiry for adapters that declare
+ * `refreshTokenLifetimeDays` (e.g. DATEV's 2-year long-term refresh token —
+ * its interface requirements mandate the expiry be visible and recomputed on
+ * every refresh). Adapters without the field get `undefined` — no behavior
+ * change for the other 175+ connectors.
+ */
+export function computeRefreshTokenExpiresAt(
+  authConfig: Record<string, unknown>,
+): number | undefined {
+  const days = Number(authConfig.refreshTokenLifetimeDays);
+  return days > 0 ? Date.now() + days * 24 * 60 * 60 * 1000 : undefined;
 }
 
 /**
@@ -343,12 +357,14 @@ export class OAuth2TokenService {
         });
         if (!connector) return;
 
+        const rollingRtExpiry = computeRefreshTokenExpiresAt(existing);
         await this.connectorAuth.saveUserCredential(connectorId, credentialUserId, connector.organizationId, {
           ...existing,
           accessToken: newAccessToken,
           refreshToken: newRefreshToken,
           expiresAt,
           lastRefreshedAt: new Date().toISOString(),
+          ...(rollingRtExpiry ? { refreshTokenExpiresAt: rollingRtExpiry } : {}),
         });
         this.logger.debug(
           `OAuth2: persisted refreshed token for connector ${connectorId} (user ${credentialUserId})`,
@@ -370,6 +386,8 @@ export class OAuth2TokenService {
       authConfig.refreshToken = newRefreshToken;
       authConfig.expiresAt = expiresAt;
       authConfig.lastRefreshedAt = new Date().toISOString();
+      const rollingRtExpiry = computeRefreshTokenExpiresAt(authConfig);
+      if (rollingRtExpiry) authConfig.refreshTokenExpiresAt = rollingRtExpiry;
 
       await this.prisma.connector.update({
         where: { id: connectorId },

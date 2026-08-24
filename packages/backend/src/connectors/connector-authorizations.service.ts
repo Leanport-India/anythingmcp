@@ -4,6 +4,7 @@ import { PrismaService } from '../common/prisma.service';
 import { encrypt, decrypt } from '../common/crypto/encryption.util';
 import { getRequiredSecret } from '../common/secrets.util';
 import { ConnectorAuthMode, UserConnectorAuthorizationStatus } from '../generated/prisma/client';
+import { revokeOAuth2Token } from './engines/oauth2-lifecycle.util';
 
 export interface AssignedConnectorSummary {
   connectorId: string;
@@ -18,6 +19,13 @@ export interface AssignedConnectorSummary {
   status: UserConnectorAuthorizationStatus;
   lastError: string | null;
   authorizedAt: Date | null;
+  // DATEV interface-requirements fields (generic — populated only for
+  // adapters that declare userinfoUrl / refreshTokenLifetimeDays /
+  // postAuthVerifyTool / connectedAppsUrl; undefined for every other adapter).
+  issuedToName?: string;
+  refreshTokenExpiresAt?: number;
+  verifiedDatasetLabel?: string;
+  connectedAppsUrl?: string;
 }
 
 /**
@@ -90,6 +98,30 @@ export class ConnectorAuthorizationsService {
     return [...byConnectorId.values()].map((a) => {
       const connector = a.connector;
       const userAuth = connector.userAuthorizations[0];
+
+      let credential: Record<string, unknown> | null = null;
+      if (userAuth?.credential) {
+        try {
+          credential = JSON.parse(decrypt(userAuth.credential, this.encryptionKey));
+        } catch {
+          // Rotated key or corrupt entry — omit the enrichment fields rather
+          // than failing the whole list.
+        }
+      }
+      let staticAuthConfig: Record<string, unknown> | null = null;
+      if (connector.authConfig) {
+        try {
+          staticAuthConfig = JSON.parse(decrypt(connector.authConfig, this.encryptionKey));
+        } catch {
+          // Same as above.
+        }
+      }
+
+      const issuedToName = credential?.issuedToName;
+      const refreshTokenExpiresAt = credential?.refreshTokenExpiresAt;
+      const verifiedDatasetLabel = credential?.verifiedDatasetLabel;
+      const connectedAppsUrl = staticAuthConfig?.connectedAppsUrl;
+
       return {
         connectorId: connector.id,
         name: connector.name,
@@ -100,6 +132,12 @@ export class ConnectorAuthorizationsService {
         status: userAuth?.status ?? UserConnectorAuthorizationStatus.PENDING,
         lastError: userAuth?.lastError ?? null,
         authorizedAt: userAuth?.authorizedAt ?? null,
+        issuedToName: typeof issuedToName === 'string' ? issuedToName : undefined,
+        refreshTokenExpiresAt:
+          typeof refreshTokenExpiresAt === 'number' ? refreshTokenExpiresAt : undefined,
+        verifiedDatasetLabel:
+          typeof verifiedDatasetLabel === 'string' ? verifiedDatasetLabel : undefined,
+        connectedAppsUrl: typeof connectedAppsUrl === 'string' ? connectedAppsUrl : undefined,
       };
     });
   }
@@ -208,6 +246,29 @@ export class ConnectorAuthorizationsService {
       where: { connectorId_userId: { connectorId, userId } },
     });
     if (!record) return;
+
+    // Best-effort OAuth2 revocation (RFC 7009) before clearing the local
+    // credential — DATEV's interface requirements mandate the RT actually be
+    // revoked at the provider, not just deleted from our own storage.
+    if (record.credential) {
+      try {
+        const credential = JSON.parse(
+          decrypt(record.credential, this.encryptionKey),
+        ) as Record<string, unknown>;
+        const connector = await this.prisma.connector.findUnique({
+          where: { id: connectorId },
+          select: { authConfig: true },
+        });
+        const staticAuthConfig = connector?.authConfig
+          ? (JSON.parse(decrypt(connector.authConfig, this.encryptionKey)) as Record<string, unknown>)
+          : {};
+        await revokeOAuth2Token({ ...staticAuthConfig, ...credential }, this.logger);
+      } catch (err: any) {
+        this.logger.warn(
+          `Failed to revoke token before disconnect (connector ${connectorId}, user ${userId}): ${err.message}`,
+        );
+      }
+    }
 
     await this.prisma.userConnectorAuthorization.update({
       where: { connectorId_userId: { connectorId, userId } },

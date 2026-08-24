@@ -22,7 +22,21 @@ type AssignedConnection = {
   status: ConnectionStatus;
   lastError: string | null;
   authorizedAt: string | null;
+  // Populated only for adapters that declare userinfoUrl / refreshTokenLifetimeDays /
+  // postAuthVerifyTool / connectedAppsUrl (e.g. DATEV) — undefined otherwise.
+  issuedToName?: string;
+  refreshTokenExpiresAt?: number;
+  verifiedDatasetLabel?: string;
+  connectedAppsUrl?: string;
 };
+
+/** DATEV's interface requirements specify this exact display format. */
+function formatExpiry(ts?: number): string | null {
+  if (!ts) return null;
+  const d = new Date(ts);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
 
 const STATUS_TONE: Record<ConnectionStatus, Tone> = {
   AUTHORIZED: 'success',
@@ -141,6 +155,26 @@ export default function MyConnectionsPage() {
                 {item.status === 'ERROR' && item.lastError && (
                   <p className="mt-1 text-[12.5px] text-[var(--danger)]">{item.lastError}</p>
                 )}
+                {item.status === 'AUTHORIZED' &&
+                  (item.issuedToName || item.refreshTokenExpiresAt || item.verifiedDatasetLabel || item.connectedAppsUrl) && (
+                    <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[12px] text-[var(--text-3)]">
+                      {item.issuedToName && <span>Connected as {item.issuedToName}</span>}
+                      {item.verifiedDatasetLabel && <span>{item.verifiedDatasetLabel}</span>}
+                      {item.refreshTokenExpiresAt && (
+                        <span>Expires {formatExpiry(item.refreshTokenExpiresAt)}</span>
+                      )}
+                      {item.connectedAppsUrl && (
+                        <a
+                          href={item.connectedAppsUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-[var(--brand)] hover:underline"
+                        >
+                          Manage in DATEV
+                        </a>
+                      )}
+                    </div>
+                  )}
               </div>
 
               {item.authMode === 'PER_USER' && (

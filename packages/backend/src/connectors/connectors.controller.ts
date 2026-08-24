@@ -48,6 +48,7 @@ import { LicenseGuardService } from '../license/license-guard.service';
 import { getRequiredSecret } from '../common/secrets.util';
 import { decrypt } from '../common/crypto/encryption.util';
 import { getAdapter } from '../adapters/catalog';
+import { revokeOAuth2Token } from './engines/oauth2-lifecycle.util';
 import { assertAdmin } from '../auth/capabilities';
 import {
   interpolateDeep,
@@ -719,6 +720,14 @@ export class ConnectorsController {
       hasClientSecret: !!cfg.clientSecret,
       hasAccessToken: !!cfg.accessToken,
       hasRefreshToken: !!cfg.refreshToken,
+      // DATEV interface-requirements fields (generic — populated only for
+      // adapters that declare them; undefined for every other connector).
+      issuedToName: typeof cfg.issuedToName === 'string' ? cfg.issuedToName : undefined,
+      refreshTokenExpiresAt:
+        typeof cfg.refreshTokenExpiresAt === 'number' ? cfg.refreshTokenExpiresAt : undefined,
+      verifiedDatasetLabel:
+        typeof cfg.verifiedDatasetLabel === 'string' ? cfg.verifiedDatasetLabel : undefined,
+      connectedAppsUrl: typeof cfg.connectedAppsUrl === 'string' ? cfg.connectedAppsUrl : undefined,
     };
   }
 
@@ -830,6 +839,19 @@ export class ConnectorsController {
   async remove(@Req() req: any, @Param('id') id: string) {
     const connector = await this.connectorsService.findById(id);
     this.assertCanWrite(connector, req);
+
+    // Best-effort OAuth2 revocation (RFC 7009) before deleting the connector —
+    // DATEV's interface requirements mandate the RT actually be revoked at
+    // the provider, not just deleted from our own storage.
+    if (connector.authType === 'OAUTH2' && connector.authConfig) {
+      try {
+        const cfg = JSON.parse(decrypt(connector.authConfig, this.encryptionKey));
+        await revokeOAuth2Token(cfg, this.logger);
+      } catch (err: any) {
+        this.logger.warn(`Failed to revoke OAuth2 token before deleting connector ${id}: ${err.message}`);
+      }
+    }
+
     await this.connectorsService.remove(id);
     // Unregister tools from in-memory MCP registries after DB cascade delete
     await this.mcpServer.reloadConnectorTools(id);

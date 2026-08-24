@@ -21,6 +21,8 @@ import { resolveInternalDbRestUrl } from '../common/db-rest.util';
 import { applyResponseTransform } from '../connectors/response-transform.util';
 import { KgService } from '../knowledge-graph/kg.service';
 import { ConnectorAuthorizationsService } from '../connectors/connector-authorizations.service';
+import { classifyToolExecutionError } from '../connectors/connector-error.util';
+import { getAdapter } from '../adapters/catalog';
 import type { ResponseMapping } from '../connectors/engines/engine-types';
 import type { RegisteredTool } from './tool-registry';
 
@@ -364,11 +366,25 @@ export class DynamicMcpTools {
         }) : undefined,
       });
 
+      // Surface a help hint + the connector's docs URL on real 4XX/5XX
+      // failures — several vendor compliance checklists (e.g. DATEV's
+      // interface requirements) mandate at minimum a help URL be shown to
+      // the end user rather than a bare status/body dump.
+      const { hint } = classifyToolExecutionError({
+        status: typeof errorDetail.status === 'number' ? errorDetail.status : undefined,
+        authType: tool.connectorConfig.authType,
+        message: typeof errorDetail.error === 'string' ? errorDetail.error : undefined,
+      });
+      const adapterSlug = (tool.connectorConfig.config as { adapterSlug?: string } | null)
+        ?.adapterSlug;
+      const docsUrl = adapterSlug ? getAdapter(adapterSlug)?.docsUrl : undefined;
+      const errorForCaller = { ...errorDetail, hint, ...(docsUrl ? { docsUrl } : {}) };
+
       return {
         content: [
           {
             type: 'text' as const,
-            text: JSON.stringify(errorDetail, null, 2),
+            text: JSON.stringify(errorForCaller, null, 2),
           },
         ],
         isError: true,

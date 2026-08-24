@@ -37,6 +37,14 @@ function formatBytes(n: number): string {
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+/** DATEV's interface requirements specify this exact display format. */
+function formatExpiry(ts?: number): string | null {
+  if (!ts) return null;
+  const d = new Date(ts);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 export default function ConnectorDetailPage() {
   const { token, user, isLoading: authLoading } = useAuth();
   const params = useParams();
@@ -73,6 +81,14 @@ export default function ConnectorDetailPage() {
   const [editOauthAuthUrl, setEditOauthAuthUrl] = useState('');
   const [editOauthTokenUrl, setEditOauthTokenUrl] = useState('');
   const [editOauthScopes, setEditOauthScopes] = useState('');
+  // Populated only for adapters that declare userinfoUrl / refreshTokenLifetimeDays /
+  // postAuthVerifyTool / connectedAppsUrl (e.g. DATEV) — null otherwise.
+  const [oauthGrantInfo, setOauthGrantInfo] = useState<{
+    issuedToName?: string;
+    refreshTokenExpiresAt?: number;
+    verifiedDatasetLabel?: string;
+    connectedAppsUrl?: string;
+  } | null>(null);
   // LOGIN_TOKEN (credentials → short-lived token, auto-refreshed) fields
   const [editLtLoginUrl, setEditLtLoginUrl] = useState('');
   const [editLtMethod, setEditLtMethod] = useState('POST');
@@ -155,6 +171,12 @@ export default function ConnectorDetailPage() {
             setEditOauthAuthUrl(r.authorizationUrl || '');
             setEditOauthTokenUrl(r.tokenUrl || '');
             setEditOauthScopes(r.scopes || '');
+            setOauthGrantInfo({
+              issuedToName: r.issuedToName,
+              refreshTokenExpiresAt: r.refreshTokenExpiresAt,
+              verifiedDatasetLabel: r.verifiedDatasetLabel,
+              connectedAppsUrl: r.connectedAppsUrl,
+            });
           })
           .catch(() => setEditTokenAuthMethod('client_secret_post'));
       }
@@ -1054,6 +1076,29 @@ export default function ConnectorDetailPage() {
                 </Button>
               )}
             </div>
+            {oauthGrantInfo &&
+              (oauthGrantInfo.issuedToName ||
+                oauthGrantInfo.refreshTokenExpiresAt ||
+                oauthGrantInfo.verifiedDatasetLabel ||
+                oauthGrantInfo.connectedAppsUrl) && (
+                <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[12px] text-[var(--text-3)]">
+                  {oauthGrantInfo.issuedToName && <span>Connected as {oauthGrantInfo.issuedToName}</span>}
+                  {oauthGrantInfo.verifiedDatasetLabel && <span>{oauthGrantInfo.verifiedDatasetLabel}</span>}
+                  {oauthGrantInfo.refreshTokenExpiresAt && (
+                    <span>Expires {formatExpiry(oauthGrantInfo.refreshTokenExpiresAt)}</span>
+                  )}
+                  {oauthGrantInfo.connectedAppsUrl && (
+                    <a
+                      href={oauthGrantInfo.connectedAppsUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-[var(--brand)] hover:underline"
+                    >
+                      Manage in DATEV
+                    </a>
+                  )}
+                </div>
+              )}
           </Card>
         )}
 

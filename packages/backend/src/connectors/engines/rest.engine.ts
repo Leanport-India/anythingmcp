@@ -193,15 +193,46 @@ export class RestEngine {
       axiosConfig.httpsAgent = agent;
       axiosConfig.httpAgent = agent;
       axiosConfig.proxy = false;
-      this.logger.debug(`REST call via proxy: ${axiosConfig.method} ${url}`);
-    } else {
-      this.logger.debug(`REST call: ${axiosConfig.method} ${url}`);
     }
+
+    // Technical HTTP log: several vendor compliance checklists (e.g. DATEV's
+    // interface requirements) mandate a chronological log of every request +
+    // response to their API — resolved URL/query, headers minus Authorization,
+    // and response status/headers (their gateway's X-Global-Transaction-ID /
+    // V-Cap-Request-ID correlation headers in particular). Captured generically
+    // here for every REST call, not just DATEV's.
+    const requestLogUrl = axiosConfig.params
+      ? `${url}${url.includes('?') ? '&' : '?'}${new URLSearchParams(axiosConfig.params as Record<string, string>).toString()}`
+      : url;
+    this.logger.debug(
+      `REST request: ${JSON.stringify({
+        method: axiosConfig.method,
+        url: requestLogUrl,
+        viaProxy: !!config.proxyUrl,
+        headers: sanitizeHeadersForLog(axiosConfig.headers),
+      })}`,
+    );
 
     try {
       const response = await this.requestWithRetry(axiosConfig);
+      this.logger.debug(
+        `REST response: ${JSON.stringify({
+          url: requestLogUrl,
+          status: response.status,
+          headers: response.headers,
+        })}`,
+      );
       return response.data;
     } catch (error) {
+      if (error instanceof AxiosError && error.response) {
+        this.logger.debug(
+          `REST response: ${JSON.stringify({
+            url: requestLogUrl,
+            status: error.response.status,
+            headers: error.response.headers,
+          })}`,
+        );
+      }
       // OAuth2 auto-refresh: retry once on 401
       if (
         error instanceof AxiosError &&
@@ -505,6 +536,25 @@ export class RestEngine {
     }
     return value;
   }
+}
+
+/**
+ * Strip the Authorization header (and any other credential-bearing header)
+ * before a request goes into the technical HTTP log — the log is for
+ * diagnosing failed calls, not for storing bearer tokens/API keys.
+ */
+const SENSITIVE_LOG_HEADERS = new Set(['authorization', 'x-api-key', 'cookie', 'set-cookie']);
+
+function sanitizeHeadersForLog(
+  headers: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+  if (!headers) return {};
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(headers)) {
+    if (SENSITIVE_LOG_HEADERS.has(key.toLowerCase())) continue;
+    out[key] = value;
+  }
+  return out;
 }
 
 /**

@@ -8,6 +8,8 @@ import { ConnectorAuthorizationsService } from './connector-authorizations.servi
 import { McpClientEngine } from './engines/mcp-client.engine';
 import { PrismaService } from '../common/prisma.service';
 import { McpServerService } from '../mcp-server/mcp-server.service';
+import { computeRefreshTokenExpiresAt } from './engines/oauth2-token.service';
+import { enrichAfterAuth } from './engines/oauth2-lifecycle.util';
 
 /**
  * Separate controller for the OAuth2 callback — no JWT guard.
@@ -81,6 +83,27 @@ export class McpOAuthCallbackController {
         const existingConnector = await this.connectorsService.findByIdInternal(
           flow.connectorId,
         );
+        const staticAuthConfig =
+          this.connectorsService.getDecryptedAuthConfig(existingConnector) || {};
+
+        // Best-effort: surface the connecting user's name (userinfo) and
+        // confirm dataset access (postAuthVerifyTool) for adapters that
+        // declare these — e.g. DATEV's interface requirements. No-op for
+        // every adapter that doesn't set them.
+        const enriched = await enrichAfterAuth({
+          prisma: this.prisma,
+          logger: this.logger,
+          connectorId: flow.connectorId,
+          accessToken: tokens.accessToken,
+          userinfoUrl:
+            typeof staticAuthConfig.userinfoUrl === 'string' ? staticAuthConfig.userinfoUrl : undefined,
+          postAuthVerifyTool:
+            typeof staticAuthConfig.postAuthVerifyTool === 'string'
+              ? staticAuthConfig.postAuthVerifyTool
+              : undefined,
+          staticHeaders: existingConnector.headers as Record<string, string> | undefined,
+        });
+        const refreshTokenExpiresAt = computeRefreshTokenExpiresAt(staticAuthConfig);
 
         await this.connectorAuth.saveUserCredential(
           flow.connectorId,
@@ -96,6 +119,17 @@ export class McpOAuthCallbackController {
             expiresIn: tokens.expiresIn,
             expiresAt: Date.now() + (tokens.expiresIn || 3600) * 1000,
             authorizedAt: new Date().toISOString(),
+            // Static, non-secret adapter metadata carried onto the per-user
+            // credential so a later refresh (which only has this credential,
+            // not the connector row) can recompute the rolling expiry, and
+            // so disconnect can find the revocation endpoint.
+            revocationUrl: staticAuthConfig.revocationUrl,
+            refreshTokenLifetimeDays: staticAuthConfig.refreshTokenLifetimeDays,
+            ...(refreshTokenExpiresAt ? { refreshTokenExpiresAt } : {}),
+            ...(enriched.issuedToName ? { issuedToName: enriched.issuedToName } : {}),
+            ...(enriched.verifiedDatasetLabel
+              ? { verifiedDatasetLabel: enriched.verifiedDatasetLabel }
+              : {}),
           },
         );
 
@@ -112,6 +146,25 @@ export class McpOAuthCallbackController {
       const existingAuthConfig =
         this.connectorsService.getDecryptedAuthConfig(existingConnector) || {};
 
+      // Best-effort: surface the connecting user's name (userinfo) and
+      // confirm dataset access (postAuthVerifyTool) for adapters that
+      // declare these — e.g. DATEV's interface requirements. No-op for
+      // every adapter that doesn't set them.
+      const enriched = await enrichAfterAuth({
+        prisma: this.prisma,
+        logger: this.logger,
+        connectorId: flow.connectorId,
+        accessToken: tokens.accessToken,
+        userinfoUrl:
+          typeof existingAuthConfig.userinfoUrl === 'string' ? existingAuthConfig.userinfoUrl : undefined,
+        postAuthVerifyTool:
+          typeof existingAuthConfig.postAuthVerifyTool === 'string'
+            ? existingAuthConfig.postAuthVerifyTool
+            : undefined,
+        staticHeaders: existingConnector.headers as Record<string, string> | undefined,
+      });
+      const refreshTokenExpiresAt = computeRefreshTokenExpiresAt(existingAuthConfig);
+
       await this.connectorsService.update(
         flow.connectorId,
         {
@@ -125,6 +178,11 @@ export class McpOAuthCallbackController {
             clientSecret: flow.clientSecret,
             tokenAuthMethod:
               flow.tokenAuthMethod || existingAuthConfig.tokenAuthMethod,
+            ...(refreshTokenExpiresAt ? { refreshTokenExpiresAt } : {}),
+            ...(enriched.issuedToName ? { issuedToName: enriched.issuedToName } : {}),
+            ...(enriched.verifiedDatasetLabel
+              ? { verifiedDatasetLabel: enriched.verifiedDatasetLabel }
+              : {}),
             expiresIn: tokens.expiresIn,
             expiresAt: Date.now() + (tokens.expiresIn || 3600) * 1000,
             authorizedAt: new Date().toISOString(),

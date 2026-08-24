@@ -198,6 +198,12 @@ export const connectors = {
       hasClientSecret: boolean;
       hasAccessToken: boolean;
       hasRefreshToken: boolean;
+      // Populated only for adapters that declare userinfoUrl / refreshTokenLifetimeDays /
+      // postAuthVerifyTool / connectedAppsUrl (e.g. DATEV) — undefined otherwise.
+      issuedToName?: string;
+      refreshTokenExpiresAt?: number;
+      verifiedDatasetLabel?: string;
+      connectedAppsUrl?: string;
     }>(`/api/connectors/${id}/oauth-config`, { token }),
   /** Non-secret LOGIN_TOKEN settings, for pre-filling the edit form. */
   getLoginTokenConfig: (id: string, token: string) =>
@@ -304,6 +310,12 @@ export const myConnections = {
         status: 'PENDING' | 'AUTHORIZED' | 'REVOKED' | 'ERROR';
         lastError: string | null;
         authorizedAt: string | null;
+        // Populated only for adapters that declare userinfoUrl / refreshTokenLifetimeDays /
+        // postAuthVerifyTool / connectedAppsUrl (e.g. DATEV) — undefined otherwise.
+        issuedToName?: string;
+        refreshTokenExpiresAt?: number;
+        verifiedDatasetLabel?: string;
+        connectedAppsUrl?: string;
       }>
     >('/api/me/connector-authorizations', { token }),
   authorize: (connectorId: string, token: string) =>

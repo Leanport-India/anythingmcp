@@ -53,6 +53,12 @@ export class RestEngine {
       bodyTemplate?: string;
       bodyEncoding?: string;
       headers?: Record<string, string>;
+      // Opt-in per-tool: some APIs carry essential metadata in response
+      // headers rather than the body — e.g. DATEV's dataexchange pagination
+      // (x-total-pages, x-current-page, ...). When set, the result becomes
+      // `{ data, responseHeaders }` instead of the bare body, so the calling
+      // LLM can see it. Every tool without this flag is unaffected.
+      includeResponseHeaders?: string[];
     },
     params: Record<string, unknown>,
   ): Promise<unknown> {
@@ -222,7 +228,7 @@ export class RestEngine {
           headers: response.headers,
         })}`,
       );
-      return response.data;
+      return buildEngineResult(response.data, response.headers, endpointMapping.includeResponseHeaders);
     } catch (error) {
       if (error instanceof AxiosError && error.response) {
         this.logger.debug(
@@ -253,7 +259,7 @@ export class RestEngine {
             ...buildOauth2TokenHeader(config.authConfig, newToken),
           };
           const retryResponse = await axios(axiosConfig);
-          return retryResponse.data;
+          return buildEngineResult(retryResponse.data, retryResponse.headers, endpointMapping.includeResponseHeaders);
         }
       }
       // LOGIN_TOKEN auto-relogin: retry once on 401 when refreshOn401 is enabled
@@ -271,7 +277,7 @@ export class RestEngine {
         );
         injectLoginTokenHeaders(axiosConfig, authConfig, bundle.token, bundle.aud);
         const retryResponse = await axios(axiosConfig);
-        return retryResponse.data;
+        return buildEngineResult(retryResponse.data, retryResponse.headers, endpointMapping.includeResponseHeaders);
       }
       throw error;
     }
@@ -536,6 +542,29 @@ export class RestEngine {
     }
     return value;
   }
+}
+
+/**
+ * Wrap the response body with selected response headers when a tool opts in
+ * via `endpointMapping.includeResponseHeaders` (e.g. pagination headers that
+ * some APIs — like DATEV's dataexchange job-result endpoints — send outside
+ * the body). Every tool that doesn't set this list gets the bare body back,
+ * byte-identical to before this existed.
+ */
+function buildEngineResult(
+  data: unknown,
+  responseHeaders: Record<string, unknown> | undefined,
+  includeResponseHeaders: string[] | undefined,
+): unknown {
+  if (!includeResponseHeaders || includeResponseHeaders.length === 0) {
+    return data;
+  }
+  const picked: Record<string, unknown> = {};
+  for (const name of includeResponseHeaders) {
+    const value = responseHeaders?.[name.toLowerCase()];
+    if (value !== undefined) picked[name] = value;
+  }
+  return { data, responseHeaders: picked };
 }
 
 /**

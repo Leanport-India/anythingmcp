@@ -188,7 +188,7 @@
         "method": "GET",
         "path": "https://accounting-data-exchange.api.datev.de/platform-sandbox/v1/clients/{clientId}/fiscal-years",
         "headers": {
-          "Accept": "application/json"
+          "Accept": "application/x-ndjson"
         }
       }
     },
@@ -203,8 +203,8 @@
             "description": "DATEV client identifier in '{consultantNumber}-{clientNumber}' format (e.g. '29098-55003') — NOT the Mandant UUID used by accounting:clients/documents tools internally. This is exactly the 'id' field returned by datev_sandbox_list_clients / datev_sandbox_get_client, so pass that value through unchanged."
           },
           "fiscalYearId": {
-            "type": "string",
-            "description": "Fiscal year ID (WirtschaftsjahresId), from datev_sandbox_dataexchange_list_fiscal_years."
+            "type": "integer",
+            "description": "Fiscal year ID (WirtschaftsjahresId) — an 8-digit integer, e.g. 20240101, from datev_sandbox_dataexchange_list_fiscal_years."
           }
         },
         "required": [
@@ -216,7 +216,7 @@
         "method": "GET",
         "path": "https://accounting-data-exchange.api.datev.de/platform-sandbox/v1/clients/{clientId}/fiscal-years/{fiscalYearId}",
         "headers": {
-          "Accept": "application/json"
+          "Accept": "application/x-ndjson"
         }
       }
     },
@@ -259,8 +259,8 @@
             "description": "DATEV client identifier in '{consultantNumber}-{clientNumber}' format (e.g. '29098-55003') — NOT the Mandant UUID used by accounting:clients/documents tools internally. This is exactly the 'id' field returned by datev_sandbox_list_clients / datev_sandbox_get_client, so pass that value through unchanged."
           },
           "fiscalYearId": {
-            "type": "string",
-            "description": "Fiscal year ID, from datev_sandbox_dataexchange_list_fiscal_years."
+            "type": "integer",
+            "description": "Fiscal year ID (WirtschaftsjahresId) — an 8-digit integer, e.g. 20240101, from datev_sandbox_dataexchange_list_fiscal_years."
           },
           "documentLinks": {
             "type": "boolean",
@@ -285,7 +285,7 @@
     },
     {
       "name": "datev_sandbox_dataexchange_get_account_postings_job",
-      "description": "Retrieve a page of Account Postings for a completed job created by datev_sandbox_dataexchange_create_account_postings_job.",
+      "description": "Retrieve a page of Account Postings for a completed job created by datev_sandbox_dataexchange_create_account_postings_job. The result includes a responseHeaders object with x-total-count/x-total-pages/x-current-page/x-page-size so you know when to stop paging.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -312,11 +312,17 @@
         "method": "GET",
         "path": "https://accounting-data-exchange.api.datev.de/platform-sandbox/v1/clients/{clientId}/account-postings-jobs/{jobId}",
         "headers": {
-          "Accept": "application/json"
+          "Accept": "application/x-ndjson"
         },
         "queryParams": {
           "page": "$page"
-        }
+        },
+        "includeResponseHeaders": [
+          "x-total-count",
+          "x-total-pages",
+          "x-current-page",
+          "x-page-size"
+        ]
       }
     },
     {
@@ -330,8 +336,8 @@
             "description": "DATEV client identifier in '{consultantNumber}-{clientNumber}' format (e.g. '29098-55003') — NOT the Mandant UUID used by accounting:clients/documents tools internally. This is exactly the 'id' field returned by datev_sandbox_list_clients / datev_sandbox_get_client, so pass that value through unchanged."
           },
           "fiscalYearId": {
-            "type": "string",
-            "description": "Fiscal year ID, from datev_sandbox_dataexchange_list_fiscal_years."
+            "type": "integer",
+            "description": "Fiscal year ID (WirtschaftsjahresId) — an 8-digit integer, e.g. 20240101, from datev_sandbox_dataexchange_list_fiscal_years."
           }
         },
         "required": [
@@ -343,7 +349,7 @@
         "method": "GET",
         "path": "https://accounting-data-exchange.api.datev.de/platform-sandbox/v1/clients/{clientId}/fiscal-years/{fiscalYearId}/accounting-sequences",
         "headers": {
-          "Accept": "application/json"
+          "Accept": "application/x-ndjson"
         }
       }
     },
@@ -358,8 +364,8 @@
             "description": "DATEV client identifier in '{consultantNumber}-{clientNumber}' format (e.g. '29098-55003') — NOT the Mandant UUID used by accounting:clients/documents tools internally. This is exactly the 'id' field returned by datev_sandbox_list_clients / datev_sandbox_get_client, so pass that value through unchanged."
           },
           "fiscalYearId": {
-            "type": "string",
-            "description": "Fiscal year ID, from datev_sandbox_dataexchange_list_fiscal_years."
+            "type": "integer",
+            "description": "Fiscal year ID (WirtschaftsjahresId) — an 8-digit integer, e.g. 20240101, from datev_sandbox_dataexchange_list_fiscal_years."
           },
           "onlyBooked": {
             "type": "boolean",
@@ -379,7 +385,7 @@
         "method": "GET",
         "path": "https://accounting-data-exchange.api.datev.de/platform-sandbox/v1/clients/{clientId}/fiscal-years/{fiscalYearId}/general-ledger-accounts",
         "headers": {
-          "Accept": "application/json"
+          "Accept": "application/x-ndjson"
         },
         "queryParams": {
           "onlyBooked": "$onlyBooked",
@@ -398,8 +404,8 @@
             "description": "DATEV client identifier in '{consultantNumber}-{clientNumber}' format (e.g. '29098-55003') — NOT the Mandant UUID used by accounting:clients/documents tools internally. This is exactly the 'id' field returned by datev_sandbox_list_clients / datev_sandbox_get_client, so pass that value through unchanged."
           },
           "fiscalYearId": {
-            "type": "string",
-            "description": "Fiscal year ID, from datev_sandbox_dataexchange_list_fiscal_years."
+            "type": "integer",
+            "description": "Fiscal year ID (WirtschaftsjahresId) — an 8-digit integer, e.g. 20240101, from datev_sandbox_dataexchange_list_fiscal_years."
           }
         },
         "required": [
@@ -411,13 +417,13 @@
         "method": "GET",
         "path": "https://accounting-data-exchange.api.datev.de/platform-sandbox/v1/clients/{clientId}/fiscal-years/{fiscalYearId}/terms-of-payment",
         "headers": {
-          "Accept": "application/json"
+          "Accept": "application/x-ndjson"
         }
       }
     },
     {
       "name": "datev_sandbox_dataexchange_get_agricultural_financial_statement",
-      "description": "Get the agricultural financial statement (landwirtschaftlicher Vermögensvergleich) for a fiscal year.",
+      "description": "Get the agricultural financial statement (landwirtschaftlicher Vermoegensvergleich) for a fiscal year, as CSV. Only available from fiscal year 20220701/20230630 onward, and only for clients using the DATEV standard chart of accounts SKR14 for agriculture and forestry (SKR14).",
       "parameters": {
         "type": "object",
         "properties": {
@@ -426,8 +432,8 @@
             "description": "DATEV client identifier in '{consultantNumber}-{clientNumber}' format (e.g. '29098-55003') — NOT the Mandant UUID used by accounting:clients/documents tools internally. This is exactly the 'id' field returned by datev_sandbox_list_clients / datev_sandbox_get_client, so pass that value through unchanged."
           },
           "fiscalYearId": {
-            "type": "string",
-            "description": "Fiscal year ID, from datev_sandbox_dataexchange_list_fiscal_years."
+            "type": "integer",
+            "description": "Fiscal year ID (WirtschaftsjahresId) — an 8-digit integer, e.g. 20240101, from datev_sandbox_dataexchange_list_fiscal_years."
           }
         },
         "required": [
@@ -439,7 +445,7 @@
         "method": "GET",
         "path": "https://accounting-data-exchange.api.datev.de/platform-sandbox/v1/clients/{clientId}/fiscal-years/{fiscalYearId}/agricultural-financial-statement",
         "headers": {
-          "Accept": "application/json"
+          "Accept": "text/csv"
         }
       }
     },
@@ -454,8 +460,8 @@
             "description": "DATEV client identifier in '{consultantNumber}-{clientNumber}' format (e.g. '29098-55003') — NOT the Mandant UUID used by accounting:clients/documents tools internally. This is exactly the 'id' field returned by datev_sandbox_list_clients / datev_sandbox_get_client, so pass that value through unchanged."
           },
           "fiscalYearId": {
-            "type": "string",
-            "description": "Fiscal year ID, from datev_sandbox_dataexchange_list_fiscal_years."
+            "type": "integer",
+            "description": "Fiscal year ID (WirtschaftsjahresId) — an 8-digit integer, e.g. 20240101, from datev_sandbox_dataexchange_list_fiscal_years."
           },
           "isClearedType": {
             "type": "string",
@@ -485,7 +491,7 @@
     },
     {
       "name": "datev_sandbox_dataexchange_get_open_items_job",
-      "description": "Retrieve a page of Open Items for a completed job created by datev_sandbox_dataexchange_create_open_items_job. WARNING (per DATEV's own spec): this endpoint is currently under development — no data is returned yet.",
+      "description": "Retrieve a page of Open Items for a completed job created by datev_sandbox_dataexchange_create_open_items_job. WARNING (per DATEV's own spec): this endpoint is currently under development — no data is returned yet. The result includes a responseHeaders object with x-total-count/x-total-pages/x-current-page/x-page-size so you know when to stop paging.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -512,11 +518,17 @@
         "method": "GET",
         "path": "https://accounting-data-exchange.api.datev.de/platform-sandbox/v1/clients/{clientId}/open-items-jobs/{jobId}",
         "headers": {
-          "Accept": "application/json"
+          "Accept": "application/x-ndjson"
         },
         "queryParams": {
           "page": "$page"
-        }
+        },
+        "includeResponseHeaders": [
+          "x-total-count",
+          "x-total-pages",
+          "x-current-page",
+          "x-page-size"
+        ]
       }
     },
     {
@@ -530,8 +542,8 @@
             "description": "DATEV client identifier in '{consultantNumber}-{clientNumber}' format (e.g. '29098-55003') — NOT the Mandant UUID used by accounting:clients/documents tools internally. This is exactly the 'id' field returned by datev_sandbox_list_clients / datev_sandbox_get_client, so pass that value through unchanged."
           },
           "fiscalYearId": {
-            "type": "string",
-            "description": "Fiscal year ID, from datev_sandbox_dataexchange_list_fiscal_years."
+            "type": "integer",
+            "description": "Fiscal year ID (WirtschaftsjahresId) — an 8-digit integer, e.g. 20240101, from datev_sandbox_dataexchange_list_fiscal_years."
           }
         },
         "required": [
@@ -543,7 +555,7 @@
         "method": "GET",
         "path": "https://accounting-data-exchange.api.datev.de/platform-sandbox/v1/clients/{clientId}/fiscal-years/{fiscalYearId}/sums-and-balances",
         "headers": {
-          "Accept": "application/json"
+          "Accept": "application/x-ndjson"
         }
       }
     },
@@ -558,8 +570,8 @@
             "description": "DATEV client identifier in '{consultantNumber}-{clientNumber}' format (e.g. '29098-55003') — NOT the Mandant UUID used by accounting:clients/documents tools internally. This is exactly the 'id' field returned by datev_sandbox_list_clients / datev_sandbox_get_client, so pass that value through unchanged."
           },
           "fiscalYearId": {
-            "type": "string",
-            "description": "Fiscal year ID, from datev_sandbox_dataexchange_list_fiscal_years."
+            "type": "integer",
+            "description": "Fiscal year ID (WirtschaftsjahresId) — an 8-digit integer, e.g. 20240101, from datev_sandbox_dataexchange_list_fiscal_years."
           }
         },
         "required": [
@@ -599,7 +611,7 @@
         "method": "GET",
         "path": "https://accounting-data-exchange.api.datev.de/platform-sandbox/v1/clients/{clientId}/sums-and-balances-quantity-and-weight-jobs/{jobId}",
         "headers": {
-          "Accept": "application/json"
+          "Accept": "application/x-ndjson"
         }
       }
     }

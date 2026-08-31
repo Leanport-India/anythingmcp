@@ -271,6 +271,13 @@ export const connectors = {
       `/api/connectors/${id}/oauth/authorize`,
       { method: 'POST', token },
     ),
+  /** Revokes the stored OAuth2 refresh token at the provider and clears local tokens
+   *  without deleting the connector — the shared-connector equivalent of "Disconnect". */
+  oauthDisconnect: (id: string, token: string) =>
+    request<{ message?: string; error?: string }>(
+      `/api/connectors/${id}/oauth/disconnect`,
+      { method: 'POST', token },
+    ),
   discoverTools: (id: string, token: string) =>
     request<{ message: string; tools: any[]; skipped?: string[]; error?: string }>(
       `/api/connectors/${id}/discover-tools`,

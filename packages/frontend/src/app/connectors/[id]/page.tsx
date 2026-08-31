@@ -81,14 +81,19 @@ export default function ConnectorDetailPage() {
   const [editOauthAuthUrl, setEditOauthAuthUrl] = useState('');
   const [editOauthTokenUrl, setEditOauthTokenUrl] = useState('');
   const [editOauthScopes, setEditOauthScopes] = useState('');
-  // Populated only for adapters that declare userinfoUrl / refreshTokenLifetimeDays /
-  // postAuthVerifyTool / connectedAppsUrl (e.g. DATEV) — null otherwise.
+  // hasRefreshToken/hasAccessToken drive the Authorize vs. Disconnect toggle below.
+  // issuedToName/refreshTokenExpiresAt/verifiedDatasetLabel/connectedAppsUrl are
+  // populated only for adapters that declare userinfoUrl / refreshTokenLifetimeDays /
+  // postAuthVerifyTool / connectedAppsUrl (e.g. DATEV) — undefined otherwise.
   const [oauthGrantInfo, setOauthGrantInfo] = useState<{
+    hasAccessToken?: boolean;
+    hasRefreshToken?: boolean;
     issuedToName?: string;
     refreshTokenExpiresAt?: number;
     verifiedDatasetLabel?: string;
     connectedAppsUrl?: string;
   } | null>(null);
+  const [disconnecting, setDisconnecting] = useState(false);
   // LOGIN_TOKEN (credentials → short-lived token, auto-refreshed) fields
   const [editLtLoginUrl, setEditLtLoginUrl] = useState('');
   const [editLtMethod, setEditLtMethod] = useState('POST');
@@ -172,6 +177,8 @@ export default function ConnectorDetailPage() {
             setEditOauthTokenUrl(r.tokenUrl || '');
             setEditOauthScopes(r.scopes || '');
             setOauthGrantInfo({
+              hasAccessToken: r.hasAccessToken,
+              hasRefreshToken: r.hasRefreshToken,
               issuedToName: r.issuedToName,
               refreshTokenExpiresAt: r.refreshTokenExpiresAt,
               verifiedDatasetLabel: r.verifiedDatasetLabel,
@@ -567,6 +574,24 @@ export default function ConnectorDetailPage() {
       setMsg(`Authorization failed: ${err.message}`);
     } finally {
       setAuthorizing(false);
+    }
+  };
+
+  const handleOAuthDisconnect = async () => {
+    if (!token) return;
+    setDisconnecting(true);
+    try {
+      const result = await connectors.oauthDisconnect(id, token);
+      if (result.error) {
+        setMsg(result.error);
+      } else {
+        setMsg('Disconnected. The stored token was revoked at the provider.');
+        setOauthGrantInfo({ hasAccessToken: false, hasRefreshToken: false });
+      }
+    } catch (err: any) {
+      setMsg(`Disconnect failed: ${err.message}`);
+    } finally {
+      setDisconnecting(false);
     }
   };
 
@@ -1067,9 +1092,15 @@ export default function ConnectorDetailPage() {
                 : 'Authorize this connector with the OAuth2 provider. After authorization, tokens will be stored securely for API calls.'}
             </p>
             <div className="flex gap-3 flex-wrap">
-              <Button variant="primary" size="lg" onClick={handleOAuthAuthorize} disabled={authorizing}>
-                {authorizing ? 'Redirecting...' : connector.type === 'MCP' ? 'Authorize with Remote Server' : 'Authorize with Provider'}
-              </Button>
+              {oauthGrantInfo?.hasAccessToken || oauthGrantInfo?.hasRefreshToken ? (
+                <Button variant="secondary" size="lg" onClick={handleOAuthDisconnect} disabled={disconnecting}>
+                  {disconnecting ? 'Disconnecting...' : 'Disconnect'}
+                </Button>
+              ) : (
+                <Button variant="primary" size="lg" onClick={handleOAuthAuthorize} disabled={authorizing}>
+                  {authorizing ? 'Redirecting...' : connector.type === 'MCP' ? 'Authorize with Remote Server' : 'Authorize with Provider'}
+                </Button>
+              )}
               {connector.type === 'MCP' && (
                 <Button variant="secondary" size="lg" onClick={handleDiscoverTools} disabled={discovering}>
                   {discovering ? 'Discovering...' : 'Re-discover Tools'}

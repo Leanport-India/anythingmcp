@@ -969,6 +969,51 @@ export class ConnectorsController {
     }
   }
 
+  @Post(':id/oauth/disconnect')
+  @ApiOperation({
+    summary: 'Disconnect the shared OAuth2 authorization for a connector',
+    description:
+      'Revokes the stored refresh token at the provider (best-effort) and clears the ' +
+      'stored tokens, without deleting the connector itself or its tools/configuration. ' +
+      "DATEV's interface requirements (and similar vendor checklists) require a " +
+      'dedicated disconnect action distinct from deleting the whole connector.',
+  })
+  async disconnectOAuth(@Req() req: any, @Param('id') id: string) {
+    const connector = await this.connectorsService.findById(id);
+    this.assertCanWrite(connector, req);
+
+    if (connector.authType !== 'OAUTH2') {
+      return { error: 'Connector auth type must be OAUTH2' };
+    }
+    if (!connector.authConfig) {
+      return { message: 'Nothing to disconnect' };
+    }
+
+    const cfg = JSON.parse(decrypt(connector.authConfig, this.encryptionKey));
+    await revokeOAuth2Token(cfg, this.logger);
+
+    // Clear only the token-specific fields — keep clientId/clientSecret/
+    // endpoints/scopes/DATEV metadata so the connector can be re-authorized
+    // without re-entering its static configuration.
+    const {
+      accessToken: _accessToken,
+      refreshToken: _refreshToken,
+      expiresIn: _expiresIn,
+      expiresAt: _expiresAt,
+      authorizedAt: _authorizedAt,
+      lastRefreshedAt: _lastRefreshedAt,
+      refreshTokenExpiresAt: _refreshTokenExpiresAt,
+      issuedToName: _issuedToName,
+      verifiedDatasetLabel: _verifiedDatasetLabel,
+      ...staticConfig
+    } = cfg;
+
+    await this.connectorsService.update(id, { authConfig: staticConfig });
+    await this.mcpServer.reloadConnectorTools(id);
+
+    return { message: 'Disconnected' };
+  }
+
   @Post(':id/discover-tools')
   @ApiOperation({
     summary: 'Discover and import tools from a remote MCP server',

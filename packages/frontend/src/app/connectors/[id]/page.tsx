@@ -63,6 +63,13 @@ export default function ConnectorDetailPage() {
 
   // OAuth + MCP discovery
   const [authorizing, setAuthorizing] = useState(false);
+  const [selectedScopeIds, setSelectedScopeIds] = useState<string[]>([]);
+  const [oauthScopeSelection, setOauthScopeSelection] = useState<{
+    title?: string;
+    description?: string;
+    required?: boolean;
+    options: Array<{ id: string; label: string; description?: string }>;
+  } | undefined>();
   const [discovering, setDiscovering] = useState(false);
   const [editing, setEditing] = useState(false);
   const [editName, setEditName] = useState('');
@@ -176,6 +183,8 @@ export default function ConnectorDetailPage() {
             setEditOauthAuthUrl(r.authorizationUrl || '');
             setEditOauthTokenUrl(r.tokenUrl || '');
             setEditOauthScopes(r.scopes || '');
+            setOauthScopeSelection(r.scopeSelection);
+            setSelectedScopeIds([]);
             setOauthGrantInfo({
               hasAccessToken: r.hasAccessToken,
               hasRefreshToken: r.hasRefreshToken,
@@ -564,7 +573,7 @@ export default function ConnectorDetailPage() {
     if (!token) return;
     setAuthorizing(true);
     try {
-      const result = await connectors.oauthAuthorize(id, token);
+      const result = await connectors.oauthAuthorize(id, token, selectedScopeIds);
       if (result.authorizationUrl) {
         window.location.href = result.authorizationUrl;
       } else if (result.error) {
@@ -1091,13 +1100,46 @@ export default function ConnectorDetailPage() {
                 ? 'Authorize this connector to access the remote MCP server. After authorization, tools will be automatically discovered.'
                 : 'Authorize this connector with the OAuth2 provider. After authorization, tokens will be stored securely for API calls.'}
             </p>
+            {oauthScopeSelection && !oauthGrantInfo?.hasAccessToken && !oauthGrantInfo?.hasRefreshToken && (
+              <div className="mb-4 rounded-[10px] border border-[var(--border)] bg-[var(--surface-2)] p-3">
+                <p className="text-[12.5px] font-semibold text-[var(--text)]">
+                  {oauthScopeSelection.title || 'Select services'}
+                </p>
+                <p className="mt-1 text-[12px] text-[var(--text-3)]">
+                  {oauthScopeSelection.description || 'Choose which services this connection may use.'}
+                </p>
+                <div className="mt-2 grid gap-2">
+                  {oauthScopeSelection.options.map((option) => (
+                    <label key={option.id} className="flex cursor-pointer items-start gap-2 text-[12px] text-[var(--text-2)]">
+                      <input
+                        type="checkbox"
+                        checked={selectedScopeIds.includes(option.id)}
+                        onChange={(event) => setSelectedScopeIds((current) => event.target.checked
+                          ? [...current, option.id]
+                          : current.filter((id) => id !== option.id))}
+                        className="mt-0.5"
+                      />
+                      <span>
+                        <span className="block font-medium">{option.label}</span>
+                        {option.description && <span className="block text-[var(--text-3)]">{option.description}</span>}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
             <div className="flex gap-3 flex-wrap">
               {oauthGrantInfo?.hasAccessToken || oauthGrantInfo?.hasRefreshToken ? (
                 <Button variant="secondary" size="lg" onClick={handleOAuthDisconnect} disabled={disconnecting}>
                   {disconnecting ? 'Disconnecting...' : 'Disconnect'}
                 </Button>
               ) : (
-                <Button variant="primary" size="lg" onClick={handleOAuthAuthorize} disabled={authorizing}>
+                <Button
+                  variant="primary"
+                  size="lg"
+                  onClick={handleOAuthAuthorize}
+                  disabled={authorizing || (!!oauthScopeSelection && selectedScopeIds.length === 0)}
+                >
                   {authorizing ? 'Redirecting...' : connector.type === 'MCP' ? 'Authorize with Remote Server' : 'Authorize with Provider'}
                 </Button>
               )}

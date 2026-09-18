@@ -26,6 +26,12 @@ export interface AssignedConnectorSummary {
   refreshTokenExpiresAt?: number;
   verifiedDatasetLabel?: string;
   connectedAppsUrl?: string;
+  scopeSelection?: {
+    title?: string;
+    description?: string;
+    required?: boolean;
+    options: Array<{ id: string; label: string; description?: string }>;
+  };
 }
 
 /**
@@ -121,6 +127,22 @@ export class ConnectorAuthorizationsService {
       const refreshTokenExpiresAt = credential?.refreshTokenExpiresAt;
       const verifiedDatasetLabel = credential?.verifiedDatasetLabel;
       const connectedAppsUrl = staticAuthConfig?.connectedAppsUrl;
+      const rawScopeSelection = staticAuthConfig?.scopeSelection as any;
+      const scopeSelection = rawScopeSelection?.options?.length
+        ? {
+            title: typeof rawScopeSelection.title === 'string' ? rawScopeSelection.title : undefined,
+            description:
+              typeof rawScopeSelection.description === 'string'
+                ? rawScopeSelection.description
+                : undefined,
+            required: rawScopeSelection.required !== false,
+            options: rawScopeSelection.options.map((option: any) => ({
+              id: String(option.id),
+              label: String(option.label),
+              ...(option.description ? { description: String(option.description) } : {}),
+            })),
+          }
+        : undefined;
 
       return {
         connectorId: connector.id,
@@ -138,6 +160,7 @@ export class ConnectorAuthorizationsService {
         verifiedDatasetLabel:
           typeof verifiedDatasetLabel === 'string' ? verifiedDatasetLabel : undefined,
         connectedAppsUrl: typeof connectedAppsUrl === 'string' ? connectedAppsUrl : undefined,
+        ...(scopeSelection ? { scopeSelection } : {}),
       };
     });
   }

@@ -28,6 +28,12 @@ type AssignedConnection = {
   refreshTokenExpiresAt?: number;
   verifiedDatasetLabel?: string;
   connectedAppsUrl?: string;
+  scopeSelection?: {
+    title?: string;
+    description?: string;
+    required?: boolean;
+    options: Array<{ id: string; label: string; description?: string }>;
+  };
 };
 
 /** DATEV's interface requirements specify this exact display format. */
@@ -60,6 +66,7 @@ export default function MyConnectionsPage() {
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [msg, setMsg] = useState('');
+  const [selectedScopes, setSelectedScopes] = useState<Record<string, string[]>>({});
 
   const load = useCallback(() => {
     if (!token) return;
@@ -86,7 +93,7 @@ export default function MyConnectionsPage() {
     if (!token) return;
     setBusyId(connectorId);
     try {
-      const result = await myConnections.authorize(connectorId, token);
+      const result = await myConnections.authorize(connectorId, token, selectedScopes[connectorId]);
       if (result.authorizationUrl) {
         window.location.href = result.authorizationUrl;
         return;
@@ -175,6 +182,41 @@ export default function MyConnectionsPage() {
                       )}
                     </div>
                   )}
+                {item.status !== 'AUTHORIZED' && item.scopeSelection && (
+                  <div className="mt-3 rounded-[10px] border border-[var(--border)] bg-[var(--surface-2)] p-3">
+                    <p className="text-[12.5px] font-semibold text-[var(--text)]">
+                      {item.scopeSelection.title || 'Select services'}
+                    </p>
+                    <p className="mt-1 text-[12px] text-[var(--text-3)]">
+                      {item.scopeSelection.description || 'Choose which services this connection may use.'}
+                    </p>
+                    <div className="mt-2 grid gap-2">
+                      {item.scopeSelection.options.map((option) => {
+                        const checked = (selectedScopes[item.connectorId] || []).includes(option.id);
+                        return (
+                          <label key={option.id} className="flex cursor-pointer items-start gap-2 text-[12px] text-[var(--text-2)]">
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={(event) => setSelectedScopes((current) => {
+                                const previous = current[item.connectorId] || [];
+                                const next = event.target.checked
+                                  ? [...previous, option.id]
+                                  : previous.filter((id) => id !== option.id);
+                                return { ...current, [item.connectorId]: next };
+                              })}
+                              className="mt-0.5"
+                            />
+                            <span>
+                              <span className="block font-medium">{option.label}</span>
+                              {option.description && <span className="block text-[var(--text-3)]">{option.description}</span>}
+                            </span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
 
               {item.authMode === 'PER_USER' && (
@@ -192,7 +234,8 @@ export default function MyConnectionsPage() {
                     <Button
                       variant="primary"
                       size="sm"
-                      disabled={busyId === item.connectorId}
+                      disabled={busyId === item.connectorId ||
+                        (!!item.scopeSelection && (selectedScopes[item.connectorId] || []).length === 0)}
                       onClick={() => handleAuthorize(item.connectorId)}
                     >
                       {item.status === 'ERROR' ? 'Retry' : 'Connect'}

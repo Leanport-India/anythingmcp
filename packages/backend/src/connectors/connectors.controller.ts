@@ -39,7 +39,7 @@ import { GraphqlParser } from './parsers/graphql.parser';
 import { PostmanParser } from './parsers/postman.parser';
 import { CurlParser } from './parsers/curl.parser';
 import { McpClientEngine } from './engines/mcp-client.engine';
-import { McpOAuthService } from './mcp-oauth.service';
+import { McpOAuthService, resolveOAuthScopes } from './mcp-oauth.service';
 import { ConnectorAuthorizationsService } from './connector-authorizations.service';
 import { CatalogResyncService } from './catalog-resync.service';
 import { PrismaService } from '../common/prisma.service';
@@ -728,6 +728,20 @@ export class ConnectorsController {
       verifiedDatasetLabel:
         typeof cfg.verifiedDatasetLabel === 'string' ? cfg.verifiedDatasetLabel : undefined,
       connectedAppsUrl: typeof cfg.connectedAppsUrl === 'string' ? cfg.connectedAppsUrl : undefined,
+      scopeSelection: cfg.scopeSelection && typeof cfg.scopeSelection === 'object'
+        ? {
+            title: typeof (cfg.scopeSelection as any).title === 'string' ? (cfg.scopeSelection as any).title : undefined,
+            description: typeof (cfg.scopeSelection as any).description === 'string' ? (cfg.scopeSelection as any).description : undefined,
+            required: (cfg.scopeSelection as any).required !== false,
+            options: Array.isArray((cfg.scopeSelection as any).options)
+              ? (cfg.scopeSelection as any).options.map((option: any) => ({
+                  id: String(option.id),
+                  label: String(option.label),
+                  ...(option.description ? { description: String(option.description) } : {}),
+                }))
+              : [],
+          }
+        : undefined,
     };
   }
 
@@ -874,7 +888,11 @@ export class ConnectorsController {
       'For REST/GraphQL connectors: uses authorizationUrl and tokenUrl from authConfig. ' +
       'Returns an authorization URL for the user to visit.',
   })
-  async initiateOAuth(@Req() req: any, @Param('id') id: string) {
+  async initiateOAuth(
+    @Req() req: any,
+    @Param('id') id: string,
+    @Body() body: { selectedScopeIds?: unknown[] } = {},
+  ) {
     const connector = await this.connectorsService.findById(id);
     this.assertCanWrite(connector, req);
 
@@ -921,7 +939,11 @@ export class ConnectorsController {
         clientSecret = authConfig.clientSecret ? String(authConfig.clientSecret) : undefined;
         authorizationEndpoint = String(authConfig.authorizationUrl || '');
         tokenEndpoint = String(authConfig.tokenUrl || '');
-        scope = authConfig.scopes ? String(authConfig.scopes) : undefined;
+        scope = resolveOAuthScopes(
+          authConfig.scopes,
+          authConfig.scopeSelection,
+          body.selectedScopeIds,
+        );
         tokenAuthMethod = authConfig.tokenAuthMethod
           ? String(authConfig.tokenAuthMethod)
           : undefined;

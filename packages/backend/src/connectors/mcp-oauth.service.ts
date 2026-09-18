@@ -27,6 +27,54 @@ interface PendingOAuthFlow {
   perUser?: boolean;
 }
 
+export interface OAuthScopeSelectionOption {
+  id: string;
+  label: string;
+  description?: string;
+  scopes: string[];
+}
+
+export interface OAuthScopeSelectionConfig {
+  title?: string;
+  description?: string;
+  required?: boolean;
+  options: OAuthScopeSelectionOption[];
+}
+
+/**
+ * Resolve the scopes after an explicit customer selection.  The selection is
+ * validated here (rather than trusting the browser) so the authorization URL
+ * can never request scopes that were not declared by the connector.
+ */
+export function resolveOAuthScopes(
+  configuredScopes: unknown,
+  selectionConfig: unknown,
+  selectedIds: unknown,
+): string | undefined {
+  const config = selectionConfig as OAuthScopeSelectionConfig | undefined;
+  if (!config?.options?.length) return configuredScopes ? String(configuredScopes) : undefined;
+
+  if (!Array.isArray(selectedIds) || selectedIds.length === 0) {
+    if (config.required !== false) {
+      throw new Error('Select the DATEV data services you want to use before continuing.');
+    }
+    return configuredScopes ? String(configuredScopes) : undefined;
+  }
+
+  const selected = [...new Set(selectedIds.map(String))];
+  const options = config.options.filter((option) => selected.includes(option.id));
+  if (options.length !== selected.length) {
+    throw new Error('The selected DATEV data service is not available for this connector.');
+  }
+
+  const allSelectableScopes = new Set(config.options.flatMap((option) => option.scopes));
+  const baseScopes = String(configuredScopes || '')
+    .split(/\s+/)
+    .filter((scope) => scope && !allSelectableScopes.has(scope));
+  const selectedScopes = [...new Set([...baseScopes, ...options.flatMap((option) => option.scopes)])];
+  return selectedScopes.join(' ');
+}
+
 function usesBasicTokenAuth(method?: string): boolean {
   return method === 'basic' || method === 'client_secret_basic';
 }

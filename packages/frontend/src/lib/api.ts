@@ -204,6 +204,12 @@ export const connectors = {
       refreshTokenExpiresAt?: number;
       verifiedDatasetLabel?: string;
       connectedAppsUrl?: string;
+      scopeSelection?: {
+        title?: string;
+        description?: string;
+        required?: boolean;
+        options: Array<{ id: string; label: string; description?: string }>;
+      };
     }>(`/api/connectors/${id}/oauth-config`, { token }),
   /** Non-secret LOGIN_TOKEN settings, for pre-filling the edit form. */
   getLoginTokenConfig: (id: string, token: string) =>
@@ -266,10 +272,10 @@ export const connectors = {
     request<{ message: string; created: number; skipped: number; tools: number }>('/api/connectors/import-all', { method: 'POST', body: data, token }),
   healthCheck: (token: string) =>
     request<{ total: number; healthy: number; unhealthy: number; connectors: any[] }>('/api/connectors/health-check', { token }),
-  oauthAuthorize: (id: string, token: string) =>
+  oauthAuthorize: (id: string, token: string, selectedScopeIds?: string[]) =>
     request<{ authorizationUrl?: string; error?: string }>(
       `/api/connectors/${id}/oauth/authorize`,
-      { method: 'POST', token },
+      { method: 'POST', token, body: selectedScopeIds ? { selectedScopeIds } : undefined },
     ),
   /** Revokes the stored OAuth2 refresh token at the provider and clears local tokens
    *  without deleting the connector — the shared-connector equivalent of "Disconnect". */
@@ -323,12 +329,18 @@ export const myConnections = {
         refreshTokenExpiresAt?: number;
         verifiedDatasetLabel?: string;
         connectedAppsUrl?: string;
+        scopeSelection?: {
+          title?: string;
+          description?: string;
+          required?: boolean;
+          options: Array<{ id: string; label: string; description?: string }>;
+        };
       }>
     >('/api/me/connector-authorizations', { token }),
-  authorize: (connectorId: string, token: string) =>
+  authorize: (connectorId: string, token: string, selectedScopeIds?: string[]) =>
     request<{ authorizationUrl?: string }>(
       `/api/me/connector-authorizations/${connectorId}/oauth/authorize`,
-      { method: 'POST', token },
+      { method: 'POST', token, body: selectedScopeIds ? { selectedScopeIds } : undefined },
     ),
   revoke: (connectorId: string, token: string) =>
     request(`/api/me/connector-authorizations/${connectorId}`, {

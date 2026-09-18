@@ -243,6 +243,16 @@ export async function enrichAfterAuth(params: {
       ) {
         throw err;
       }
+      if (requiredEntitlement) {
+        if (requiredEntitlement.revokeOnFailure !== false && tokenConfig) {
+          await revokeOAuth2Tokens(tokenConfig, logger, { accessToken, refreshToken });
+        }
+        throw new Error(
+          `DATEV entitlement verification failed and the authorization was revoked. ` +
+            `The verification request could not be completed: ${String(err.message)}` +
+            (requiredEntitlement.orderUrl ? ` See: ${requiredEntitlement.orderUrl}` : ''),
+        );
+      }
     }
   }
 

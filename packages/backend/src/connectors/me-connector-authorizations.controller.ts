@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Post,
+  Body,
   Delete,
   Param,
   Req,
@@ -15,7 +16,7 @@ import { AuthGuard } from '@nestjs/passport';
 import { ConfigService } from '@nestjs/config';
 import { ConnectorAuthorizationsService } from './connector-authorizations.service';
 import { ConnectorsService } from './connectors.service';
-import { McpOAuthService } from './mcp-oauth.service';
+import { McpOAuthService, resolveOAuthScopes } from './mcp-oauth.service';
 import { ConnectorAuthMode } from '../generated/prisma/client';
 
 /**
@@ -50,7 +51,11 @@ export class MeConnectorAuthorizationsController {
       'The resulting token belongs only to the current user. Fails if the ' +
       'connector is not assigned to this user, or is not a PER_USER connector.',
   })
-  async authorize(@Req() req: any, @Param('connectorId') connectorId: string) {
+  async authorize(
+    @Req() req: any,
+    @Param('connectorId') connectorId: string,
+    @Body() body: { selectedScopeIds?: unknown[] } = {},
+  ) {
     await this.connectorAuth.assertAssigned(connectorId, req.user.sub, req.user.organizationId);
 
     const connector = await this.connectorsService.findByIdInternal(connectorId);
@@ -88,7 +93,15 @@ export class MeConnectorAuthorizationsController {
       clientSecret = authConfig.clientSecret ? String(authConfig.clientSecret) : undefined;
       authorizationEndpoint = String(authConfig.authorizationUrl || '');
       tokenEndpoint = String(authConfig.tokenUrl || '');
-      scope = authConfig.scopes ? String(authConfig.scopes) : undefined;
+      try {
+        scope = resolveOAuthScopes(
+          authConfig.scopes,
+          authConfig.scopeSelection,
+          body.selectedScopeIds,
+        );
+      } catch (error: any) {
+        throw new BadRequestException(error?.message || 'Select the requested data services first');
+      }
       tokenAuthMethod = authConfig.tokenAuthMethod ? String(authConfig.tokenAuthMethod) : undefined;
     }
 

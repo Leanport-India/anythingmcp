@@ -66,5 +66,32 @@ describe('McpOAuthService', () => {
         `Basic ${Buffer.from('datev-client:secret%3Awith%20space').toString('base64')}`,
       );
     });
+
+    it('preserves provider refresh-token lifetime metadata', async () => {
+      mockedAxios.post.mockResolvedValue({
+        data: {
+          access_token: 'access-token',
+          refresh_token: 'refresh-token',
+          expires_in: 900,
+          refresh_token_expires_in: 39600,
+          refresh_token_type: 'short_term',
+        },
+      });
+
+      const result = await service.exchangeCodeForTokens({
+        tokenUrl: 'https://sandbox-api.datev.de/token',
+        code: 'code-123',
+        redirectUri: 'https://app.example.com/api/mcp-oauth/callback',
+        clientId: 'datev-client',
+        clientSecret: 'secret',
+        tokenAuthMethod: 'client_secret_basic',
+        codeVerifier: 'verifier',
+      });
+
+      expect(result.refreshTokenExpiresIn).toBe(39600);
+      expect(result.refreshTokenLifetimeDays).toBeCloseTo(39600 / 86400);
+      expect(result.refreshTokenType).toBe('short_term');
+      expect(result.refreshTokenExpiresAt).toBeGreaterThan(Date.now());
+    });
   });
 });

@@ -102,8 +102,22 @@ export class McpOAuthCallbackController {
               ? staticAuthConfig.postAuthVerifyTool
               : undefined,
           staticHeaders: existingConnector.headers as Record<string, string> | undefined,
+          requiredEntitlement:
+            staticAuthConfig.requiredEntitlement as
+              | { serviceName: string; revokeOnFailure?: boolean; orderUrl?: string }
+              | undefined,
+          tokenConfig: staticAuthConfig,
+          refreshToken: tokens.refreshToken,
         });
-        const refreshTokenExpiresAt = computeRefreshTokenExpiresAt(staticAuthConfig);
+        const refreshTokenExpiresAt = computeRefreshTokenExpiresAt({
+          ...staticAuthConfig,
+          ...(tokens.refreshTokenLifetimeDays
+            ? { refreshTokenLifetimeDays: tokens.refreshTokenLifetimeDays }
+            : {}),
+          ...(tokens.refreshTokenExpiresAt
+            ? { refreshTokenExpiresAt: tokens.refreshTokenExpiresAt }
+            : {}),
+        });
 
         await this.connectorAuth.saveUserCredential(
           flow.connectorId,
@@ -125,6 +139,13 @@ export class McpOAuthCallbackController {
             // so disconnect can find the revocation endpoint.
             revocationUrl: staticAuthConfig.revocationUrl,
             refreshTokenLifetimeDays: staticAuthConfig.refreshTokenLifetimeDays,
+            ...(tokens.refreshTokenLifetimeDays
+              ? { refreshTokenLifetimeDays: tokens.refreshTokenLifetimeDays }
+              : {}),
+            ...(tokens.refreshTokenExpiresAt
+              ? { refreshTokenExpiresAt: tokens.refreshTokenExpiresAt }
+              : {}),
+            ...(tokens.refreshTokenType ? { refreshTokenType: tokens.refreshTokenType } : {}),
             ...(refreshTokenExpiresAt ? { refreshTokenExpiresAt } : {}),
             ...(enriched.issuedToName ? { issuedToName: enriched.issuedToName } : {}),
             ...(enriched.verifiedDatasetLabel
@@ -162,8 +183,22 @@ export class McpOAuthCallbackController {
             ? existingAuthConfig.postAuthVerifyTool
             : undefined,
         staticHeaders: existingConnector.headers as Record<string, string> | undefined,
+        requiredEntitlement:
+          existingAuthConfig.requiredEntitlement as
+            | { serviceName: string; revokeOnFailure?: boolean; orderUrl?: string }
+            | undefined,
+        tokenConfig: existingAuthConfig,
+        refreshToken: tokens.refreshToken,
       });
-      const refreshTokenExpiresAt = computeRefreshTokenExpiresAt(existingAuthConfig);
+      const refreshTokenExpiresAt = computeRefreshTokenExpiresAt({
+        ...existingAuthConfig,
+        ...(tokens.refreshTokenLifetimeDays
+          ? { refreshTokenLifetimeDays: tokens.refreshTokenLifetimeDays }
+          : {}),
+        ...(tokens.refreshTokenExpiresAt
+          ? { refreshTokenExpiresAt: tokens.refreshTokenExpiresAt }
+          : {}),
+      });
 
       await this.connectorsService.update(
         flow.connectorId,
@@ -179,6 +214,13 @@ export class McpOAuthCallbackController {
             tokenAuthMethod:
               flow.tokenAuthMethod || existingAuthConfig.tokenAuthMethod,
             ...(refreshTokenExpiresAt ? { refreshTokenExpiresAt } : {}),
+            ...(tokens.refreshTokenLifetimeDays
+              ? { refreshTokenLifetimeDays: tokens.refreshTokenLifetimeDays }
+              : {}),
+            ...(tokens.refreshTokenExpiresAt
+              ? { refreshTokenExpiresAt: tokens.refreshTokenExpiresAt }
+              : {}),
+            ...(tokens.refreshTokenType ? { refreshTokenType: tokens.refreshTokenType } : {}),
             ...(enriched.issuedToName ? { issuedToName: enriched.issuedToName } : {}),
             ...(enriched.verifiedDatasetLabel
               ? { verifiedDatasetLabel: enriched.verifiedDatasetLabel }

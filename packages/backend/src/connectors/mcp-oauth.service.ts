@@ -171,6 +171,10 @@ export class McpOAuthService {
     accessToken: string;
     refreshToken?: string;
     expiresIn?: number;
+    refreshTokenExpiresIn?: number;
+    refreshTokenExpiresAt?: number;
+    refreshTokenLifetimeDays?: number;
+    refreshTokenType?: string;
   }> {
     const tokenAuthMethod = String(params.tokenAuthMethod || 'body');
     const body: Record<string, string> = {
@@ -213,10 +217,34 @@ export class McpOAuthService {
       throw new Error(`Token exchange failed: ${data.error} — ${data.error_description || ''}`);
     }
 
+    const refreshTokenExpiresIn = Number(data.refresh_token_expires_in);
+    const rawRefreshTokenExpiresAt = data.refresh_token_expires_at;
+    const numericRefreshTokenExpiresAt = Number(rawRefreshTokenExpiresAt);
+    const parsedRefreshTokenExpiresAt =
+      typeof rawRefreshTokenExpiresAt === 'string' && Number.isNaN(numericRefreshTokenExpiresAt)
+        ? Date.parse(rawRefreshTokenExpiresAt)
+        : numericRefreshTokenExpiresAt;
+    const refreshTokenExpiresAt = Number.isFinite(parsedRefreshTokenExpiresAt) && parsedRefreshTokenExpiresAt > 0
+      ? (parsedRefreshTokenExpiresAt < 1_000_000_000_000
+        ? parsedRefreshTokenExpiresAt * 1000
+        : parsedRefreshTokenExpiresAt)
+      : undefined;
+
     return {
       accessToken: data.access_token,
       refreshToken: data.refresh_token,
       expiresIn: data.expires_in,
+      ...(Number.isFinite(refreshTokenExpiresIn) && refreshTokenExpiresIn > 0
+        ? {
+            refreshTokenExpiresIn,
+            refreshTokenLifetimeDays: refreshTokenExpiresIn / 86400,
+            refreshTokenExpiresAt:
+              refreshTokenExpiresAt || Date.now() + refreshTokenExpiresIn * 1000,
+          }
+        : refreshTokenExpiresAt
+          ? { refreshTokenExpiresAt }
+          : {}),
+      ...(data.refresh_token_type ? { refreshTokenType: String(data.refresh_token_type) } : {}),
     };
   }
 

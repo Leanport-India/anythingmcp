@@ -2,7 +2,7 @@
   "slug": "datev-sandbox",
   "name": "DATEV Online APIs Sandbox",
   "description": "Sandbox DATEV connector covering accounting-clients, accounting-documents (Belegbilderservice), and accounting-dataexchange (Datenservice Export Rechnungswesen) from DATEV's Online APIs.",
-  "instructions": "**Important — this connector is NOT plug-and-play.** DATEV's Online APIs require:\n\n1. A registered sandbox app on the DATEV-Entwicklerportal (https://developer.datev.de) → **Confidential client** + **OpenID Connect Authorization Code Flow**. Set the redirect URI to `<your-server>/api/mcp-oauth/callback`.\n2. A subscription to each sandbox API product you want to use — currently `accounting-clients v2.0`, `accounting-documents v2.0`, and `accounting-dataexchange v1`.\n3. A DATEV-Konto user with SmartLogin or SmartCard/mIDentity. DATEV does NOT expose `client_credentials` — every call is on-behalf-of a human accountant. Confidential clients get 2-year rolling refresh tokens (the engine refreshes proactively).\n\n**Sandbox defaults**: this adapter is pinned to `https://login.datev.de/openidsandbox/authorize`, `https://sandbox-api.datev.de/token`, and `platform-sandbox` API paths. Use this adapter for sandbox apps so catalog imports do not reset the connector back to production.\n\n**Setup**:\n1. Set `DATEV_CLIENT_ID` and `DATEV_CLIENT_SECRET` (from the DATEV portal sandbox app).\n2. Import this adapter.\n3. Run the one-time OAuth flow: `POST /api/connectors/{id}/oauth/authorize` → open the returned URL → log in with your DATEV-Konto → the platform stores an encrypted refresh token automatically.\n4. From now on every call sends `Authorization: Bearer <token>` AND the mandatory `X-DATEV-Client-Id: <DATEV_CLIENT_ID>` header automatically.\n\n**Scopes requested**: `openid profile email offline_access datev:accounting:clients accounting:clients:read accounting:documents datev:accounting:exchange` — scoped to just the three product lines this adapter exposes. Your DATEV sandbox app still needs the corresponding product subscriptions/permissions.\n\n**accounting-data-exchange note**: this product's real API (per DATEV's own OpenAPI spec, v1.7.0) lives on a separate host (`accounting-data-exchange.api.datev.de`, hyphenated) with no bare `/clients` listing endpoint of its own — get `clientId` from `datev_sandbox_list_clients` instead. Job creation is per resource type (account-postings, open-items, sums-and-balances-quantity-and-weight), each with its own dedicated result-retrieval endpoint, rather than one generic jobs/result endpoint. `open-items` is marked by DATEV as under development and currently returns no data.\n\n**Mandant scoping**: most per-client tools take a `clientId` parameter — that's the **Mandant UUID** (RFC4122 8-4-4-4-12), returned by the relevant product's client-list tool. **Distinct** from `DATEV_CLIENT_ID` (the OAuth app identifier, sent in the header).\n\n**Not exposed here**:\n- Multipart/file upload endpoints are excluded where they require binary file parts, because the REST engine does not yet support safe binary upload values.\n- `accounting:dxso-jobs`, `accounting:extf-files`, MyTax, tax-transfer, and all HR/Lohn product lines (payroll reports, payroll exports, eAU, HR documents, HR exchange) were removed from this adapter to keep the sandbox scoped to what's actually released for production — see `datev.json` product-line adapters if you need to test those separately.\n- The `datev_idp_next` security option (next-gen `signin.datev.de/datevam/...` IdP) is defined in the specs but not yet exposed here.",
+  "instructions": "**Important — this connector is NOT plug-and-play.** DATEV's Online APIs require:\n\n1. A registered sandbox app on the DATEV-Entwicklerportal (https://developer.datev.de) → **Confidential client** + **OpenID Connect Authorization Code Flow**. Set the redirect URI to `<your-server>/api/mcp-oauth/callback`.\n2. A subscription to each sandbox API product you want to use — currently `accounting-clients v2.0`, `accounting-documents v2.0`, and `accounting-dataexchange v1`.\n3. A DATEV-Konto user with SmartLogin or SmartCard/mIDentity. DATEV does NOT expose `client_credentials` — every call is on-behalf-of a human accountant. The engine records the refresh-token lifetime returned by DATEV when available; do not assume a two-year token.\n\n**Sandbox defaults**: this adapter is pinned to `https://login.datev.de/openidsandbox/authorize`, `https://sandbox-api.datev.de/token`, and `platform-sandbox` API paths. Use this adapter for sandbox apps so catalog imports do not reset the connector back to production.\n\n**Setup**:\n1. Set `DATEV_CLIENT_ID` and `DATEV_CLIENT_SECRET` (from the DATEV portal sandbox app).\n2. Import this adapter.\n3. Run the one-time OAuth flow: `POST /api/connectors/{id}/oauth/authorize` → open the returned URL → log in with your DATEV-Konto → the platform stores an encrypted refresh token automatically.\n4. From now on every call sends `Authorization: Bearer <token>` AND the mandatory `X-DATEV-Client-Id: <DATEV_CLIENT_ID>` header automatically.\n\n**Scopes requested**: `openid profile email offline_access datev:accounting:clients accounting:clients:read accounting:documents datev:accounting:exchange` — scoped to just the three product lines this adapter exposes. Your DATEV sandbox app still needs the corresponding product subscriptions/permissions. The requested scopes are sent together because this connector requires all three services; DATEV remains authoritative for the consent and token type shown during authorization.\n\n**accounting-data-exchange note**: this product's real API (per DATEV's own OpenAPI spec, v1.7.0) lives on a separate host (`accounting-data-exchange.api.datev.de`, hyphenated) with no bare `/clients` listing endpoint of its own — get `clientId` from `datev_sandbox_list_clients` instead. Job creation is per resource type (account-postings, open-items, sums-and-balances-quantity-and-weight), each with its own dedicated result-retrieval endpoint, rather than one generic jobs/result endpoint. `open-items` is marked by DATEV as under development and currently returns no data.\n\n**Mandant scoping**: most per-client tools take a `clientId` parameter — that's the **Mandant UUID** (RFC4122 8-4-4-4-12), returned by the relevant product's client-list tool. **Distinct** from `DATEV_CLIENT_ID` (the OAuth app identifier, sent in the header).\n\n**Not exposed here**:\n- Multipart/file upload endpoints are excluded where they require binary file parts, because the REST engine does not yet support safe binary upload values.\n- `accounting:dxso-jobs`, `accounting:extf-files`, MyTax, tax-transfer, and all HR/Lohn product lines (payroll reports, payroll exports, eAU, HR documents, HR exchange) were removed from this adapter to keep the sandbox scoped to what's actually released for production — see `datev.json` product-line adapters if you need to test those separately.\n- The `datev_idp_next` security option (next-gen `signin.datev.de/datevam/...` IdP) is defined in the specs but not yet exposed here.",
   "region": "de",
   "category": "accounting",
   "icon": "datev",
@@ -26,8 +26,12 @@
       "revocationUrl": "https://sandbox-api.datev.de/revoke",
       "userinfoUrl": "https://sandbox-api.datev.de/userinfo",
       "connectedAppsUrl": "https://apps.datev.de/tokrevui",
-      "refreshTokenLifetimeDays": 730,
-      "postAuthVerifyTool": "datev_sandbox_list_clients"
+      "postAuthVerifyTool": "datev_sandbox_list_clients",
+      "requiredEntitlement": {
+        "serviceName": "Datenservice Export Rechnungswesen",
+        "orderUrl": "https://developer.datev.de/en/products/988700e4-e0c5-40bf-814b-cd7327dad67a",
+        "revokeOnFailure": true
+      }
     },
     "headers": {
       "X-DATEV-Client-Id": "{{DATEV_CLIENT_ID}}"
@@ -42,10 +46,13 @@
         "properties": {
           "skip": {
             "type": "integer",
+            "minimum": 0,
             "description": "Pagination offset (>= 0)."
           },
           "top": {
             "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
             "description": "Max items per page (1-100)."
           }
         }
@@ -177,6 +184,7 @@
         "properties": {
           "clientId": {
             "type": "string",
+            "pattern": "^[0-9]+-[0-9]+$",
             "description": "DATEV client identifier in '{consultantNumber}-{clientNumber}' format (e.g. '29098-55003') — NOT the Mandant UUID used by accounting:clients/documents tools internally. This is exactly the 'id' field returned by datev_sandbox_list_clients / datev_sandbox_get_client, so pass that value through unchanged."
           }
         },
@@ -204,6 +212,8 @@
           },
           "fiscalYearId": {
             "type": "integer",
+            "minimum": 10000000,
+            "maximum": 99999999,
             "description": "Fiscal year ID (WirtschaftsjahresId) — an 8-digit integer, e.g. 20240101, from datev_sandbox_dataexchange_list_fiscal_years."
           }
         },
@@ -299,6 +309,8 @@
           },
           "page": {
             "type": "integer",
+            "minimum": 1,
+            "maximum": 25000,
             "description": "Page number (1-25000). Required by DATEV's API."
           }
         },
@@ -465,6 +477,7 @@
           },
           "isClearedType": {
             "type": "string",
+            "enum": ["OPEN_ITEM", "ALL"],
             "description": "OPEN_ITEM (default, only open items) or ALL (all items regardless of clearing state)."
           },
           "includeDocumentLink": {

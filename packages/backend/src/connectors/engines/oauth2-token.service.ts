@@ -31,6 +31,8 @@ export function buildBasicTokenAuthHeader(clientId: string, clientSecret: string
 export function computeRefreshTokenExpiresAt(
   authConfig: Record<string, unknown>,
 ): number | undefined {
+  const explicit = Number(authConfig.refreshTokenExpiresAt);
+  if (Number.isFinite(explicit) && explicit > Date.now()) return explicit;
   const days = Number(authConfig.refreshTokenLifetimeDays);
   return days > 0 ? Date.now() + days * 24 * 60 * 60 * 1000 : undefined;
 }

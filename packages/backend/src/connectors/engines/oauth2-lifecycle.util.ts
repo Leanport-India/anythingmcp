@@ -190,6 +190,17 @@ export async function enrichAfterAuth(params: {
             : Array.isArray((data as Record<string, unknown>)?.items)
               ? ((data as Record<string, unknown>).items as unknown[])
               : undefined;
+        const debug = summarizeVerifyResponse(data, list);
+        logger.log(
+          `[OAUTH2-VERIFY] ${JSON.stringify({
+            connectorId,
+            tool: postAuthVerifyTool,
+            url: mapping.path,
+            status: res.status,
+            requiredService: requiredEntitlement?.serviceName ?? null,
+            ...debug,
+          })}`,
+        );
         if (requiredEntitlement) {
           const serviceName = requiredEntitlement.serviceName;
           const entitledItems = list?.filter((item) => {
@@ -208,7 +219,9 @@ export async function enrichAfterAuth(params: {
             throw new Error(
               `DATEV entitlement missing: ${serviceName}. The authorization was revoked. ` +
                 'Order or enable the required DATEV service before retrying.' +
-                (requiredEntitlement.orderUrl ? ` See: ${requiredEntitlement.orderUrl}` : ''),
+                (requiredEntitlement.orderUrl ? ` See: ${requiredEntitlement.orderUrl}` : '') +
+                ` (checked ${debug.clientCount ?? 0} client(s); services seen: ` +
+                `${debug.servicesSeen.length ? debug.servicesSeen.join(', ') : 'none'})`,
             );
           }
           const ids = entitledItems
@@ -237,6 +250,16 @@ export async function enrichAfterAuth(params: {
       }
     } catch (err: any) {
       logger.warn(`OAuth2: post-auth verify call (${postAuthVerifyTool}) failed: ${err.message}`);
+      if (err?.response) {
+        logger.warn(
+          `[OAUTH2-VERIFY] ${JSON.stringify({
+            connectorId,
+            tool: postAuthVerifyTool,
+            status: err.response.status,
+            responseBody: JSON.stringify(err.response.data ?? null).slice(0, 2000),
+          })}`,
+        );
+      }
       if (
         requiredEntitlement &&
         /^DATEV entitlement (missing:|check could not run)/.test(String(err.message))
@@ -257,4 +280,47 @@ export async function enrichAfterAuth(params: {
   }
 
   return result;
+}
+
+/**
+ * Compact, PII-light summary of a post-auth verify response for the
+ * `[OAUTH2-VERIFY]` log line: the response shape, how many clients came back,
+ * and each client's id plus the raw `services` entries. Client names and
+ * addresses are left out on purpose.
+ */
+export function summarizeVerifyResponse(
+  data: unknown,
+  list: unknown[] | undefined,
+): {
+  responseShape: string;
+  clientCount: number | null;
+  servicesSeen: string[];
+  clients: Array<{ id: unknown; services: unknown }>;
+} {
+  const responseShape = Array.isArray(data)
+    ? 'array'
+    : data && typeof data === 'object'
+      ? `object{${Object.keys(data as Record<string, unknown>).join(',')}}`
+      : typeof data;
+  const serviceLabel = (service: unknown): string => {
+    if (typeof service === 'string') return service;
+    const record = (service ?? {}) as Record<string, unknown>;
+    return String(record.name ?? record.displayName ?? JSON.stringify(service));
+  };
+  const seen = new Set<string>();
+  const clients = (list ?? []).slice(0, 25).map((item) => {
+    const record = (item ?? {}) as Record<string, unknown>;
+    const services = record.services;
+    if (Array.isArray(services)) services.forEach((s) => seen.add(serviceLabel(s)));
+    return {
+      id: record.clientId ?? record.client_id ?? record.id ?? null,
+      services: services ?? '(no services field)',
+    };
+  });
+  return {
+    responseShape,
+    clientCount: list ? list.length : null,
+    servicesSeen: [...seen],
+    clients,
+  };
 }

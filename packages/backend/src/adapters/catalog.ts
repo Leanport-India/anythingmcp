@@ -3,6 +3,7 @@ import * as billbee from './de/billbee.json';
 import * as billomat from './de/billomat.json';
 import * as bundesbank from './de/bundesbank.json';
 import * as datev from './de/datev.json';
+import * as datevLive from './de/datev-live.json';
 import * as datevSandbox from './de/datev-sandbox.json';
 import * as destatisGenesis from './de/destatis-genesis.json';
 import * as deutscheBahn from './de/deutsche-bahn.json';
@@ -287,6 +288,7 @@ const RAW_ADAPTERS: AdapterDefinition[] = [
   billomat as unknown as AdapterDefinition,
   bundesbank as unknown as AdapterDefinition,
   datev as unknown as AdapterDefinition,
+  datevLive as unknown as AdapterDefinition,
   datevSandbox as unknown as AdapterDefinition,
   destatisGenesis as unknown as AdapterDefinition,
   deutscheBahn as unknown as AdapterDefinition,

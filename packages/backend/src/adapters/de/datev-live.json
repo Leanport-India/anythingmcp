@@ -1,0 +1,575 @@
+{
+  "slug": "datev-live",
+  "name": "DATEV Online APIs (Live)",
+  "description": "Production DATEV connector covering accounting-clients and accounting-dataexchange (Datenservice Export Rechnungswesen) from DATEV's Online APIs. Read-only.",
+  "instructions": "**Important — this connector is NOT plug-and-play.** DATEV's Online APIs require:\n\n1. A registered app on the DATEV-Entwicklerportal (https://developer.datev.de) → **Confidential client** + **OpenID Connect Authorization Code Flow**, with DATEV **production approval** completed. Set the redirect URI to `<your-server>/api/mcp-oauth/callback`.\n2. A production subscription to each API product you want to use — currently `accounting-clients v2.0` and `accounting-dataexchange v1`.\n3. A DATEV-Konto user with SmartLogin or SmartCard/mIDentity. DATEV does NOT expose `client_credentials` — every call is on-behalf-of a human accountant. The engine records the refresh-token lifetime returned by DATEV when available; do not assume a two-year token.\n\n**Production defaults**: this adapter is pinned to `https://login.datev.de/openid/authorize`, `https://api.datev.de/token`, and `platform` API paths. Use the `datev-sandbox` adapter for sandbox apps.\n\n**Setup**:\n1. Set `DATEV_CLIENT_ID` and `DATEV_CLIENT_SECRET` (from the production-approved DATEV portal app).\n2. Import this adapter.\n3. During authorization, actively select the DATEV data services this connection will use in the AnythingMCP consent step. The selected services determine the scopes sent to DATEV; DATEV then displays its own final consent screen.\n4. Run the OAuth flow: `POST /api/connectors/{id}/oauth/authorize` → open the returned URL → log in with your DATEV-Konto → the platform stores an encrypted refresh token automatically.\n5. From now on every call sends `Authorization: Bearer <token>` AND the mandatory `X-DATEV-Client-Id: <DATEV_CLIENT_ID>` header automatically.\n\n**accounting-data-exchange ordering**: always call `datev_live_dataexchange_list_fiscal_years` first for the selected client, choose one returned `fiscalYearId`, and only then call account-postings, open-items, accounting-sequences, general-ledger-accounts, terms-of-payment, agricultural-financial-statement, or sums-and-balances tools. Do not invent a fiscal year ID.\n\n**accounting-data-exchange note**: this product lives on a separate host (`accounting-data-exchange.api.datev.de`, hyphenated) with no bare `/clients` listing endpoint of its own — get `clientId` from `datev_live_list_clients` instead. Job creation is per resource type (account-postings, open-items, sums-and-balances-quantity-and-weight), each with its own dedicated result-retrieval endpoint. The three job-creation tools use POST only because DATEV models exports as jobs — they do not modify accounting data. `open-items` is marked by DATEV as under development and currently returns no data.\n\n**Client IDs**: pass the `id` returned by `datev_live_list_clients` / `datev_live_get_client` unchanged as `clientId`. **Distinct** from `DATEV_CLIENT_ID` (the OAuth app identifier, sent in the header).\n\n**Not exposed here**:\n- accounting-documents (Belegbilderservice / DUO) — intentionally excluded from the live adapter; no `accounting:documents` scope is requested.\n- All write/upload endpoints, `accounting:dxso-jobs`, `accounting:extf-files`, MyTax, tax-transfer, and all HR/Lohn product lines.\n- The `datev_idp_next` security option (next-gen `signin.datev.de/datevam/...` IdP).",
+  "region": "de",
+  "category": "accounting",
+  "icon": "datev",
+  "docsUrl": "https://developer.datev.de/en/products/988700e4-e0c5-40bf-814b-cd7327dad67a",
+  "requiredEnvVars": [
+    "DATEV_CLIENT_ID",
+    "DATEV_CLIENT_SECRET"
+  ],
+  "connector": {
+    "name": "DATEV Online APIs (Live)",
+    "type": "REST",
+    "baseUrl": "https://accounting-clients.api.datev.de/platform/v2",
+    "authType": "OAUTH2",
+    "authConfig": {
+      "clientId": "{{DATEV_CLIENT_ID}}",
+      "clientSecret": "{{DATEV_CLIENT_SECRET}}",
+      "authorizationUrl": "https://login.datev.de/openid/authorize",
+      "tokenUrl": "https://api.datev.de/token",
+      "tokenAuthMethod": "client_secret_basic",
+      "scopes": "openid profile email offline_access datev:accounting:clients accounting:clients:read datev:accounting:exchange",
+      "revocationUrl": "https://api.datev.de/revoke",
+      "userinfoUrl": "https://api.datev.de/userinfo",
+      "connectedAppsUrl": "https://apps.datev.de/tokrevui",
+      "postAuthVerifyTool": "datev_live_list_clients",
+      "scopeSelection": {
+        "title": "DATEV data services",
+        "description": "Select the DATEV data services this connection is allowed to use. DATEV will show the final consent screen next.",
+        "required": true,
+        "options": [
+          {
+            "id": "accounting-clients",
+            "label": "Accounting clients",
+            "description": "Client and Mandant master data.",
+            "scopes": [
+              "datev:accounting:clients",
+              "accounting:clients:read"
+            ]
+          },
+          {
+            "id": "accounting-dataexchange",
+            "label": "Accounting data exchange",
+            "description": "Fiscal years, postings, open items, and sums and balances.",
+            "scopes": [
+              "datev:accounting:exchange"
+            ]
+          }
+        ]
+      },
+      "requiredEntitlement": {
+        "serviceName": "Datenservice Export Rechnungswesen",
+        "orderUrl": "https://www.datev.de/web/de/shop/produkt-details/datev-datenservice-export-rechnungswesen-92913",
+        "revokeOnFailure": true
+      }
+    },
+    "headers": {
+      "X-DATEV-Client-Id": "{{DATEV_CLIENT_ID}}"
+    }
+  },
+  "tools": [
+    {
+      "name": "datev_live_list_clients",
+      "description": "List DATEV accounting Mandanten (clients) your DATEV-Konto user is provisioned for, from the accounting-clients v2 master-data product. Returns each client's UUID, consultant number, client number and display name. Use the returned UUID as the `clientId` parameter on all other tools.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "skip": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Pagination offset (>= 0)."
+          },
+          "top": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "description": "Max items per page (1-100)."
+          }
+        }
+      },
+      "endpointMapping": {
+        "method": "GET",
+        "path": "https://accounting-clients.api.datev.de/platform/v2/clients",
+        "queryParams": {
+          "skip": "$skip",
+          "top": "$top"
+        },
+        "headers": {
+          "Accept": "application/json"
+        }
+      }
+    },
+    {
+      "name": "datev_live_get_client",
+      "description": "Get one Mandant's master data (consultant/client number, name, address) from accounting-clients v2.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "description": "Mandant UUID (RFC4122 8-4-4-4-12). Get this from datev_live_list_clients."
+          }
+        },
+        "required": [
+          "clientId"
+        ]
+      },
+      "endpointMapping": {
+        "method": "GET",
+        "path": "https://accounting-clients.api.datev.de/platform/v2/clients/{clientId}",
+        "headers": {
+          "Accept": "application/json"
+        }
+      }
+    },
+    {
+      "name": "datev_live_dataexchange_list_fiscal_years",
+      "description": "List the fiscal years (Wirtschaftsjahre) available for a Mandant in the Datenservice Export Rechnungswesen (accounting-data-exchange). Get the clientId from datev_live_list_clients.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "pattern": "^[0-9]+-[0-9]+$",
+            "description": "DATEV client identifier in '{consultantNumber}-{clientNumber}' format (e.g. '29098-55003') — NOT the Mandant UUID used internally by accounting:clients. This is exactly the 'id' field returned by datev_live_list_clients / datev_live_get_client, so pass that value through unchanged."
+          }
+        },
+        "required": [
+          "clientId"
+        ]
+      },
+      "endpointMapping": {
+        "method": "GET",
+        "path": "https://accounting-data-exchange.api.datev.de/platform/v1/clients/{clientId}/fiscal-years",
+        "headers": {
+          "Accept": "application/x-ndjson"
+        }
+      }
+    },
+    {
+      "name": "datev_live_dataexchange_get_fiscal_year",
+      "description": "Get one fiscal year's (Wirtschaftsjahr) details for a Mandant. Only use a fiscalYearId returned by datev_live_dataexchange_list_fiscal_years.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "description": "DATEV client identifier in '{consultantNumber}-{clientNumber}' format (e.g. '29098-55003') — NOT the Mandant UUID used internally by accounting:clients. This is exactly the 'id' field returned by datev_live_list_clients / datev_live_get_client, so pass that value through unchanged."
+          },
+          "fiscalYearId": {
+            "type": "integer",
+            "minimum": 10000000,
+            "maximum": 99999999,
+            "description": "Fiscal year ID (WirtschaftsjahresId) — an 8-digit integer, e.g. 20240101, from datev_live_dataexchange_list_fiscal_years."
+          }
+        },
+        "required": [
+          "clientId",
+          "fiscalYearId"
+        ]
+      },
+      "endpointMapping": {
+        "method": "GET",
+        "path": "https://accounting-data-exchange.api.datev.de/platform/v1/clients/{clientId}/fiscal-years/{fiscalYearId}",
+        "headers": {
+          "Accept": "application/x-ndjson"
+        }
+      }
+    },
+    {
+      "name": "datev_live_dataexchange_get_job_state",
+      "description": "Get the state (pending/done/error) of any accounting-data-exchange job by its job ID, regardless of which resource type it was created for.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "description": "DATEV client identifier in '{consultantNumber}-{clientNumber}' format (e.g. '29098-55003') — NOT the Mandant UUID used internally by accounting:clients. This is exactly the 'id' field returned by datev_live_list_clients / datev_live_get_client, so pass that value through unchanged."
+          },
+          "jobId": {
+            "type": "string",
+            "description": "Job ID returned when the job was created."
+          }
+        },
+        "required": [
+          "clientId",
+          "jobId"
+        ]
+      },
+      "endpointMapping": {
+        "method": "GET",
+        "path": "https://accounting-data-exchange.api.datev.de/platform/v1/clients/{clientId}/jobs/{jobId}/state",
+        "headers": {
+          "Accept": "application/json"
+        }
+      }
+    },
+    {
+      "name": "datev_live_dataexchange_create_account_postings_job",
+      "description": "Create an asynchronous job to retrieve Account Postings (Kontobuchungen) for a fiscal year. First call datev_live_dataexchange_list_fiscal_years and use one of its returned fiscalYearId values. Returns a jobId — poll datev_live_dataexchange_get_job_state, then fetch the result with datev_live_dataexchange_get_account_postings_job.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "description": "DATEV client identifier in '{consultantNumber}-{clientNumber}' format (e.g. '29098-55003') — NOT the Mandant UUID used internally by accounting:clients. This is exactly the 'id' field returned by datev_live_list_clients / datev_live_get_client, so pass that value through unchanged."
+          },
+          "fiscalYearId": {
+            "type": "integer",
+            "description": "Fiscal year ID (WirtschaftsjahresId) — an 8-digit integer, e.g. 20240101, from datev_live_dataexchange_list_fiscal_years."
+          },
+          "documentLinks": {
+            "type": "boolean",
+            "description": "Include document links for each posting in the result. Default false."
+          }
+        },
+        "required": [
+          "clientId",
+          "fiscalYearId"
+        ]
+      },
+      "endpointMapping": {
+        "method": "POST",
+        "path": "https://accounting-data-exchange.api.datev.de/platform/v1/clients/{clientId}/fiscal-years/{fiscalYearId}/account-postings",
+        "headers": {
+          "Accept": "application/json"
+        },
+        "queryParams": {
+          "documentLinks": "$documentLinks"
+        }
+      }
+    },
+    {
+      "name": "datev_live_dataexchange_get_account_postings_job",
+      "description": "Retrieve a page of Account Postings for a completed job created by datev_live_dataexchange_create_account_postings_job. The result includes a responseHeaders object with x-total-count/x-total-pages/x-current-page/x-page-size so you know when to stop paging.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "description": "DATEV client identifier in '{consultantNumber}-{clientNumber}' format (e.g. '29098-55003') — NOT the Mandant UUID used internally by accounting:clients. This is exactly the 'id' field returned by datev_live_list_clients / datev_live_get_client, so pass that value through unchanged."
+          },
+          "jobId": {
+            "type": "string",
+            "description": "Job ID returned by datev_live_dataexchange_create_account_postings_job."
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 25000,
+            "description": "Page number (1-25000). Required by DATEV's API."
+          }
+        },
+        "required": [
+          "clientId",
+          "jobId",
+          "page"
+        ]
+      },
+      "endpointMapping": {
+        "method": "GET",
+        "path": "https://accounting-data-exchange.api.datev.de/platform/v1/clients/{clientId}/account-postings-jobs/{jobId}",
+        "headers": {
+          "Accept": "application/x-ndjson"
+        },
+        "queryParams": {
+          "page": "$page"
+        },
+        "includeResponseHeaders": [
+          "x-total-count",
+          "x-total-pages",
+          "x-current-page",
+          "x-page-size"
+        ]
+      }
+    },
+    {
+      "name": "datev_live_dataexchange_list_accounting_sequences",
+      "description": "List the accounting sequences (Belegkreise/Buchungssequenzen) for a fiscal year. First call datev_live_dataexchange_list_fiscal_years and use one of its returned fiscalYearId values.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "description": "DATEV client identifier in '{consultantNumber}-{clientNumber}' format (e.g. '29098-55003') — NOT the Mandant UUID used internally by accounting:clients. This is exactly the 'id' field returned by datev_live_list_clients / datev_live_get_client, so pass that value through unchanged."
+          },
+          "fiscalYearId": {
+            "type": "integer",
+            "description": "Fiscal year ID (WirtschaftsjahresId) — an 8-digit integer, e.g. 20240101, from datev_live_dataexchange_list_fiscal_years."
+          }
+        },
+        "required": [
+          "clientId",
+          "fiscalYearId"
+        ]
+      },
+      "endpointMapping": {
+        "method": "GET",
+        "path": "https://accounting-data-exchange.api.datev.de/platform/v1/clients/{clientId}/fiscal-years/{fiscalYearId}/accounting-sequences",
+        "headers": {
+          "Accept": "application/x-ndjson"
+        }
+      }
+    },
+    {
+      "name": "datev_live_dataexchange_list_general_ledger_accounts",
+      "description": "List general ledger accounts (Sachkonten) for a fiscal year. First call datev_live_dataexchange_list_fiscal_years and use one of its returned fiscalYearId values.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "description": "DATEV client identifier in '{consultantNumber}-{clientNumber}' format (e.g. '29098-55003') — NOT the Mandant UUID used internally by accounting:clients. This is exactly the 'id' field returned by datev_live_list_clients / datev_live_get_client, so pass that value through unchanged."
+          },
+          "fiscalYearId": {
+            "type": "integer",
+            "description": "Fiscal year ID (WirtschaftsjahresId) — an 8-digit integer, e.g. 20240101, from datev_live_dataexchange_list_fiscal_years."
+          },
+          "onlyBooked": {
+            "type": "boolean",
+            "description": "true: only accounts that have been booked. Default false (all captioned accounts)."
+          },
+          "includesPersonalAccounts": {
+            "type": "boolean",
+            "description": "true: also include booked/captioned business-partner accounts. Default false."
+          }
+        },
+        "required": [
+          "clientId",
+          "fiscalYearId"
+        ]
+      },
+      "endpointMapping": {
+        "method": "GET",
+        "path": "https://accounting-data-exchange.api.datev.de/platform/v1/clients/{clientId}/fiscal-years/{fiscalYearId}/general-ledger-accounts",
+        "headers": {
+          "Accept": "application/x-ndjson"
+        },
+        "queryParams": {
+          "onlyBooked": "$onlyBooked",
+          "includesPersonalAccounts": "$includesPersonalAccounts"
+        }
+      }
+    },
+    {
+      "name": "datev_live_dataexchange_list_terms_of_payment",
+      "description": "List the terms of payment (Zahlungsbedingungen) configured for a fiscal year. First call datev_live_dataexchange_list_fiscal_years and use one of its returned fiscalYearId values.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "description": "DATEV client identifier in '{consultantNumber}-{clientNumber}' format (e.g. '29098-55003') — NOT the Mandant UUID used internally by accounting:clients. This is exactly the 'id' field returned by datev_live_list_clients / datev_live_get_client, so pass that value through unchanged."
+          },
+          "fiscalYearId": {
+            "type": "integer",
+            "description": "Fiscal year ID (WirtschaftsjahresId) — an 8-digit integer, e.g. 20240101, from datev_live_dataexchange_list_fiscal_years."
+          }
+        },
+        "required": [
+          "clientId",
+          "fiscalYearId"
+        ]
+      },
+      "endpointMapping": {
+        "method": "GET",
+        "path": "https://accounting-data-exchange.api.datev.de/platform/v1/clients/{clientId}/fiscal-years/{fiscalYearId}/terms-of-payment",
+        "headers": {
+          "Accept": "application/x-ndjson"
+        }
+      }
+    },
+    {
+      "name": "datev_live_dataexchange_get_agricultural_financial_statement",
+      "description": "Get the agricultural financial statement (landwirtschaftlicher Vermoegensvergleich) for a fiscal year, as CSV. Only available from fiscal year 20220701/20230630 onward, and only for clients using the DATEV standard chart of accounts SKR14 for agriculture and forestry (SKR14).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "description": "DATEV client identifier in '{consultantNumber}-{clientNumber}' format (e.g. '29098-55003') — NOT the Mandant UUID used internally by accounting:clients. This is exactly the 'id' field returned by datev_live_list_clients / datev_live_get_client, so pass that value through unchanged."
+          },
+          "fiscalYearId": {
+            "type": "integer",
+            "description": "Fiscal year ID (WirtschaftsjahresId) — an 8-digit integer, e.g. 20240101, from datev_live_dataexchange_list_fiscal_years."
+          }
+        },
+        "required": [
+          "clientId",
+          "fiscalYearId"
+        ]
+      },
+      "endpointMapping": {
+        "method": "GET",
+        "path": "https://accounting-data-exchange.api.datev.de/platform/v1/clients/{clientId}/fiscal-years/{fiscalYearId}/agricultural-financial-statement",
+        "headers": {
+          "Accept": "text/csv"
+        }
+      }
+    },
+    {
+      "name": "datev_live_dataexchange_create_open_items_job",
+      "description": "Create an asynchronous job to retrieve Open Items (offene Posten) for a fiscal year. WARNING (per DATEV's own spec): this endpoint is currently under development — no data is returned yet. Poll with datev_live_dataexchange_get_job_state, fetch with datev_live_dataexchange_get_open_items_job.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "description": "DATEV client identifier in '{consultantNumber}-{clientNumber}' format (e.g. '29098-55003') — NOT the Mandant UUID used internally by accounting:clients. This is exactly the 'id' field returned by datev_live_list_clients / datev_live_get_client, so pass that value through unchanged."
+          },
+          "fiscalYearId": {
+            "type": "integer",
+            "description": "Fiscal year ID (WirtschaftsjahresId) — an 8-digit integer, e.g. 20240101, from datev_live_dataexchange_list_fiscal_years."
+          },
+          "isClearedType": {
+            "type": "string",
+            "enum": [
+              "OPEN_ITEM",
+              "ALL"
+            ],
+            "description": "OPEN_ITEM (default, only open items) or ALL (all items regardless of clearing state)."
+          },
+          "includeDocumentLink": {
+            "type": "boolean",
+            "description": "Include the document link field in the result. Default false."
+          }
+        },
+        "required": [
+          "clientId",
+          "fiscalYearId"
+        ]
+      },
+      "endpointMapping": {
+        "method": "POST",
+        "path": "https://accounting-data-exchange.api.datev.de/platform/v1/clients/{clientId}/fiscal-years/{fiscalYearId}/open-items",
+        "headers": {
+          "Accept": "application/json"
+        },
+        "queryParams": {
+          "isClearedType": "$isClearedType",
+          "includeDocumentLink": "$includeDocumentLink"
+        }
+      }
+    },
+    {
+      "name": "datev_live_dataexchange_get_open_items_job",
+      "description": "Retrieve a page of Open Items for a completed job created by datev_live_dataexchange_create_open_items_job. WARNING (per DATEV's own spec): this endpoint is currently under development — no data is returned yet. The result includes a responseHeaders object with x-total-count/x-total-pages/x-current-page/x-page-size so you know when to stop paging.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "description": "DATEV client identifier in '{consultantNumber}-{clientNumber}' format (e.g. '29098-55003') — NOT the Mandant UUID used internally by accounting:clients. This is exactly the 'id' field returned by datev_live_list_clients / datev_live_get_client, so pass that value through unchanged."
+          },
+          "jobId": {
+            "type": "string",
+            "description": "Job ID returned by datev_live_dataexchange_create_open_items_job."
+          },
+          "page": {
+            "type": "integer",
+            "description": "Page number (1-25000). Required by DATEV's API."
+          }
+        },
+        "required": [
+          "clientId",
+          "jobId",
+          "page"
+        ]
+      },
+      "endpointMapping": {
+        "method": "GET",
+        "path": "https://accounting-data-exchange.api.datev.de/platform/v1/clients/{clientId}/open-items-jobs/{jobId}",
+        "headers": {
+          "Accept": "application/x-ndjson"
+        },
+        "queryParams": {
+          "page": "$page"
+        },
+        "includeResponseHeaders": [
+          "x-total-count",
+          "x-total-pages",
+          "x-current-page",
+          "x-page-size"
+        ]
+      }
+    },
+    {
+      "name": "datev_live_dataexchange_list_sums_and_balances",
+      "description": "List accounting sums and balances (Summen und Salden) for a fiscal year. First call datev_live_dataexchange_list_fiscal_years and use one of its returned fiscalYearId values.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "description": "DATEV client identifier in '{consultantNumber}-{clientNumber}' format (e.g. '29098-55003') — NOT the Mandant UUID used internally by accounting:clients. This is exactly the 'id' field returned by datev_live_list_clients / datev_live_get_client, so pass that value through unchanged."
+          },
+          "fiscalYearId": {
+            "type": "integer",
+            "description": "Fiscal year ID (WirtschaftsjahresId) — an 8-digit integer, e.g. 20240101, from datev_live_dataexchange_list_fiscal_years."
+          }
+        },
+        "required": [
+          "clientId",
+          "fiscalYearId"
+        ]
+      },
+      "endpointMapping": {
+        "method": "GET",
+        "path": "https://accounting-data-exchange.api.datev.de/platform/v1/clients/{clientId}/fiscal-years/{fiscalYearId}/sums-and-balances",
+        "headers": {
+          "Accept": "application/x-ndjson"
+        }
+      }
+    },
+    {
+      "name": "datev_live_dataexchange_create_sums_and_balances_quantity_and_weight_job",
+      "description": "Create an asynchronous job to retrieve Sums and Balances Quantity and Weight (Summen und Salden mit Menge und Gewicht) for a fiscal year. Poll with datev_live_dataexchange_get_job_state, fetch with datev_live_dataexchange_get_sums_and_balances_quantity_and_weight_job.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "description": "DATEV client identifier in '{consultantNumber}-{clientNumber}' format (e.g. '29098-55003') — NOT the Mandant UUID used internally by accounting:clients. This is exactly the 'id' field returned by datev_live_list_clients / datev_live_get_client, so pass that value through unchanged."
+          },
+          "fiscalYearId": {
+            "type": "integer",
+            "description": "Fiscal year ID (WirtschaftsjahresId) — an 8-digit integer, e.g. 20240101, from datev_live_dataexchange_list_fiscal_years."
+          }
+        },
+        "required": [
+          "clientId",
+          "fiscalYearId"
+        ]
+      },
+      "endpointMapping": {
+        "method": "POST",
+        "path": "https://accounting-data-exchange.api.datev.de/platform/v1/clients/{clientId}/fiscal-years/{fiscalYearId}/sums-and-balances-quantity-and-weight",
+        "headers": {
+          "Accept": "application/json"
+        }
+      }
+    },
+    {
+      "name": "datev_live_dataexchange_get_sums_and_balances_quantity_and_weight_job",
+      "description": "Retrieve the result of a completed job created by datev_live_dataexchange_create_sums_and_balances_quantity_and_weight_job.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "description": "DATEV client identifier in '{consultantNumber}-{clientNumber}' format (e.g. '29098-55003') — NOT the Mandant UUID used internally by accounting:clients. This is exactly the 'id' field returned by datev_live_list_clients / datev_live_get_client, so pass that value through unchanged."
+          },
+          "jobId": {
+            "type": "string",
+            "description": "Job ID returned by datev_live_dataexchange_create_sums_and_balances_quantity_and_weight_job."
+          }
+        },
+        "required": [
+          "clientId",
+          "jobId"
+        ]
+      },
+      "endpointMapping": {
+        "method": "GET",
+        "path": "https://accounting-data-exchange.api.datev.de/platform/v1/clients/{clientId}/sums-and-balances-quantity-and-weight-jobs/{jobId}",
+        "headers": {
+          "Accept": "application/x-ndjson"
+        }
+      }
+    }
+  ]
+}

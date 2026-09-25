@@ -11,6 +11,8 @@ Current locations:
 | Microsoft Graph Directory | `packages/backend/src/adapters/intl/microsoft-graph-directory.json` |
 | DATEV Sandbox | `packages/backend/src/adapters/de/datev-sandbox.json` |
 | DATEV Sandbox live test | `packages/backend/src/adapters/de/datev-sandbox.live.spec.ts` |
+| DATEV Live | `packages/backend/src/adapters/de/datev-live.json` |
+| DATEV Live test | `packages/backend/src/adapters/de/datev-live.live.spec.ts` |
 
 `packages/backend/src/adapters/catalog.ts` has been regenerated, so these
 adapters are available through the regular AnythingMCP adapter UI/API. Users

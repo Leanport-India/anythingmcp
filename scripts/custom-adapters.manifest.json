@@ -2,6 +2,7 @@
   "adapters": [
     "packages/backend/src/adapters/intl/microsoft-graph-directory.json",
     "packages/backend/src/adapters/intl/microsoft-graph-mail.json",
-    "packages/backend/src/adapters/de/datev-sandbox.json"
+    "packages/backend/src/adapters/de/datev-sandbox.json",
+    "packages/backend/src/adapters/de/datev-live.json"
   ]
 }
